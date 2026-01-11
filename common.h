@@ -26,6 +26,7 @@
 #define POJEMNOSC_SEKTORA (POJEMNOSC_CALKOWITA / LICZBA_SEKTOROW)
 #define LICZBA_KAS 10
 #define LIMIT_VIP 5
+#define SZANSA_NA_PRZEDMIOT 1
 
 #define DRUZYNA_A 1
 #define DRUZYNA_B 2
@@ -55,6 +56,9 @@ typedef struct {
     struct {
         int liczba_osob;
         int obecna_druzyna;
+        pid_t pid_obslugiwanego;
+        int czy_ma_przedmiot;
+        int czy_agresywny;
     } bramki[LICZBA_SEKTOROW][2];
 
     pid_t pidy_pracownikow[LICZBA_SEKTOROW];
