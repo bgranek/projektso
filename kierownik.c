@@ -28,6 +28,34 @@ void inicjalizuj() {
     }
 }
 
+void wyslij_blokade() {
+    int nr_sektora;
+    printf("Podaj numer sektora do zablokowania (0-%d): ", LICZBA_SEKTOROW - 1);
+    if (scanf("%d", &nr_sektora) != 1) return;
+
+    if (nr_sektora < 0 || nr_sektora >= LICZBA_SEKTOROW) {
+        printf("Bledny numer sektora.\n");
+        return;
+    }
+    printf("Wybrano blokade sektora %d (logika wkrotce).\n", nr_sektora);
+}
+
+void wyslij_odblokowanie() {
+    int nr_sektora;
+    printf("Podaj numer sektora do odblokowania (0-%d): ", LICZBA_SEKTOROW - 1);
+    if (scanf("%d", &nr_sektora) != 1) return;
+
+    if (nr_sektora < 0 || nr_sektora >= LICZBA_SEKTOROW) {
+        printf("Bledny numer sektora.\n");
+        return;
+    }
+    printf("Wybrano odblokowanie sektora %d (logika wkrotce).\n", nr_sektora);
+}
+
+void zarzadzaj_ewakuacja() {
+    printf("Wybrano ewakuacje hali (logika wkrotce).\n");
+}
+
 int main() {
     if (atexit(obsluga_wyjscia) != 0) {
         perror("atexit");
@@ -46,7 +74,35 @@ int main() {
     stan_hali->pid_kierownika = getpid();
 
     while (1) {
-        sleep(1);
+        printf("\n--- PANEL KIEROWNIKA ---\n");
+        printf("1. Zablokuj sektor\n");
+        printf("2. Odblokuj sektor\n");
+        printf("3. Oglos ewakuacje\n");
+        printf("4. Wyjscie\n");
+        printf("Wybierz opcje: ");
+
+        int opcja;
+        if (scanf("%d", &opcja) != 1) {
+            int c;
+            while ((c = getchar()) != '\n' && c != EOF);
+            continue;
+        }
+
+        switch (opcja) {
+            case 1:
+                wyslij_blokade();
+                break;
+            case 2:
+                wyslij_odblokowanie();
+                break;
+            case 3:
+                zarzadzaj_ewakuacja();
+                break;
+            case 4:
+                exit(0);
+            default:
+                printf("Nieznana opcja.\n");
+        }
     }
 
     return 0;
