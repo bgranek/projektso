@@ -37,7 +37,17 @@ void wyslij_blokade() {
         printf("Bledny numer sektora.\n");
         return;
     }
-    printf("Wybrano blokade sektora %d (logika wkrotce).\n", nr_sektora);
+
+    pid_t pid = stan_hali->pidy_pracownikow[nr_sektora];
+    if (pid > 0) {
+        if (kill(pid, SYGNAL_BLOKADA_SEKTORA) == 0) {
+            printf("Wyslano sygnal BLOKADA do pracownika sektora %d (PID: %d)\n", nr_sektora, pid);
+        } else {
+            perror("kill");
+        }
+    } else {
+        printf("Brak aktywnego pracownika w sektorze %d.\n", nr_sektora);
+    }
 }
 
 void wyslij_odblokowanie() {
@@ -49,11 +59,26 @@ void wyslij_odblokowanie() {
         printf("Bledny numer sektora.\n");
         return;
     }
-    printf("Wybrano odblokowanie sektora %d (logika wkrotce).\n", nr_sektora);
+
+    pid_t pid = stan_hali->pidy_pracownikow[nr_sektora];
+    if (pid > 0) {
+        if (kill(pid, SYGNAL_ODBLOKOWANIE_SEKTORA) == 0) {
+            printf("Wyslano sygnal ODBLOKOWANIE do pracownika sektora %d (PID: %d)\n", nr_sektora, pid);
+        } else {
+            perror("kill");
+        }
+    } else {
+        printf("Brak aktywnego pracownika w sektorze %d.\n", nr_sektora);
+    }
 }
 
 void zarzadzaj_ewakuacja() {
-    printf("Wybrano ewakuacje hali (logika wkrotce).\n");
+    printf("UWAGA: OGLASZAM EWAKUACJE HALI!\n");
+    stan_hali->ewakuacja_trwa = 1;
+    
+    if (kill(0, SYGNAL_EWAKUACJA) == -1) {
+        perror("kill ewakuacja");
+    }
 }
 
 int main() {
@@ -103,6 +128,7 @@ int main() {
             default:
                 printf("Nieznana opcja.\n");
         }
+        sleep(1);
     }
 
     return 0;
