@@ -39,17 +39,57 @@ void inicjalizuj() {
     }
 }
 
-void sprawdz_kolejke() {
+void obsluz_klienta() {
     KomunikatBilet zapytanie;
     
-    ssize_t status = msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long), TYP_KOMUNIKATU_ZAPYTANIE, IPC_NOWAIT);
-    
-    if (status != -1) {
-        printf("Kasjer %d: Otrzymano prosbe o bilet od PID %d (Druzyna: %d, VIP: %d)\n", 
-               id_kasjera, zapytanie.pid_kibica, zapytanie.id_druzyny, zapytanie.czy_vip);
-    } else {
+    if (msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long), TYP_KOMUNIKATU_ZAPYTANIE, IPC_NOWAIT) == -1) {
         if (errno != ENOMSG) {
             perror("msgrcv");
+        }
+        return;
+    }
+
+    struct sembuf operacje[1];
+    operacje[0].sem_num = 0;
+    operacje[0].sem_op = -1;
+    operacje[0].sem_flg = 0;
+    
+    if (semop(sem_id, operacje, 1) == -1) {
+        perror("semop P");
+        return;
+    }
+
+    int znaleziono_sektor = -1;
+    int start_sektor = rand() % LICZBA_SEKTOROW;
+    
+    for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+        int idx = (start_sektor + i) % LICZBA_SEKTOROW;
+        
+        if (stan_hali->liczniki_sektorow[idx] < POJEMNOSC_SEKTORA) {
+            stan_hali->liczniki_sektorow[idx]++;
+            znaleziono_sektor = idx;
+            break;
+        }
+    }
+
+    operacje[0].sem_op = 1;
+    if (semop(sem_id, operacje, 1) == -1) {
+        perror("semop V");
+    }
+
+    OdpowiedzBilet odpowiedz;
+    odpowiedz.mtype = zapytanie.pid_kibica;
+    odpowiedz.przydzielony_sektor = znaleziono_sektor;
+    odpowiedz.czy_sukces = (znaleziono_sektor != -1) ? 1 : 0;
+
+    if (msgsnd(msg_id, &odpowiedz, sizeof(OdpowiedzBilet) - sizeof(long), 0) == -1) {
+        perror("msgsnd");
+    } else {
+        if (odpowiedz.czy_sukces) {
+            printf("Kasjer %d: Sprzedano bilet (Sektor %d) dla PID %d.\n", 
+                   id_kasjera, odpowiedz.przydzielony_sektor, zapytanie.pid_kibica);
+        } else {
+            printf("Kasjer %d: Brak miejsc dla PID %d.\n", id_kasjera, zapytanie.pid_kibica);
         }
     }
 }
@@ -71,12 +111,13 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    srand(time(NULL) ^ (getpid() << 16));
     inicjalizuj();
 
     stan_hali->pidy_kasjerow[id_kasjera] = getpid();
     stan_hali->kasa_aktywna[id_kasjera] = 1;
 
-    printf("Kasjer nr %d gotowy (PID: %d). Nasluchuje...\n", id_kasjera, getpid());
+    printf("Kasjer nr %d gotowy (PID: %d). Oczekiwanie na klientow...\n", id_kasjera, getpid());
 
     while (1) {
         if (stan_hali->ewakuacja_trwa) {
@@ -84,8 +125,8 @@ int main(int argc, char *argv[]) {
             break;
         }
         
-        sprawdz_kolejke();
-        usleep(100000);
+        obsluz_klienta();
+        usleep(100000); 
     }
 
     return 0;
