@@ -39,6 +39,43 @@ void inicjalizuj() {
     }
 }
 
+void aktualizuj_kolejke(int zmiana) {
+    struct sembuf operacje[1];
+    operacje[0].sem_num = 0;
+    operacje[0].sem_op = -1;
+    operacje[0].sem_flg = 0;
+    
+    if (semop(sem_id, operacje, 1) == -1) return;
+
+    if (zmiana > 0) {
+        int wybrana_kasa = -1;
+        int min_dlugosc = 100000;
+
+        for (int i = 0; i < LICZBA_KAS; i++) {
+            if (stan_hali->kasa_aktywna[i]) {
+                if (stan_hali->kolejka_dlugosc[i] < min_dlugosc) {
+                    min_dlugosc = stan_hali->kolejka_dlugosc[i];
+                    wybrana_kasa = i;
+                }
+            }
+        }
+
+        if (wybrana_kasa != -1) {
+            stan_hali->kolejka_dlugosc[wybrana_kasa]++;
+        }
+    } else {
+        for (int i = 0; i < LICZBA_KAS; i++) {
+             if (stan_hali->kolejka_dlugosc[i] > 0) {
+                 stan_hali->kolejka_dlugosc[i]--;
+                 break;
+             }
+        }
+    }
+
+    operacje[0].sem_op = 1;
+    semop(sem_id, operacje, 1);
+}
+
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
