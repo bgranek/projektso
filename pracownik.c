@@ -5,9 +5,35 @@ int shm_id = -1;
 StanHali *stan_hali = NULL;
 
 void obsluga_wyjscia() {
-    if (stan_hali != NULL) {
+    if (stan_hali != NULL && id_sektora >= 0) {
+        stan_hali->pidy_pracownikow[id_sektora] = 0;
         shmdt(stan_hali);
     }
+}
+
+void handler_blokada(int sig) {
+    (void)sig;
+    if (stan_hali != NULL && id_sektora >= 0) {
+        stan_hali->sektor_zablokowany[id_sektora] = 1;
+        const char *msg = "SEKTOR ZABLOKOWANY\n";
+        write(STDOUT_FILENO, msg, strlen(msg));
+    }
+}
+
+void handler_odblokowanie(int sig) {
+    (void)sig;
+    if (stan_hali != NULL && id_sektora >= 0) {
+        stan_hali->sektor_zablokowany[id_sektora] = 0;
+        const char *msg = "SEKTOR ODBLOKOWANY\n";
+        write(STDOUT_FILENO, msg, strlen(msg));
+    }
+}
+
+void handler_ewakuacja(int sig) {
+    (void)sig;
+    const char *msg = "EWAKUACJA! Otwieram bramki awaryjne.\n";
+    write(STDOUT_FILENO, msg, strlen(msg));
+    exit(0);
 }
 
 void inicjalizuj() {
@@ -22,6 +48,21 @@ void inicjalizuj() {
         perror("shmat");
         exit(EXIT_FAILURE);
     }
+}
+
+void rejestruj_sygnaly() {
+    struct sigaction sa;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    sa.sa_handler = handler_blokada;
+    sigaction(SYGNAL_BLOKADA_SEKTORA, &sa, NULL);
+
+    sa.sa_handler = handler_odblokowanie;
+    sigaction(SYGNAL_ODBLOKOWANIE_SEKTORA, &sa, NULL);
+
+    sa.sa_handler = handler_ewakuacja;
+    sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
 }
 
 int main(int argc, char *argv[]) {
@@ -42,10 +83,17 @@ int main(int argc, char *argv[]) {
     }
 
     inicjalizuj();
+    rejestruj_sygnaly();
 
-    printf("Pracownik sektora %d uruchomiony (PID: %d). Oczekiwanie...\n", id_sektora, getpid());
+    stan_hali->pidy_pracownikow[id_sektora] = getpid();
+    stan_hali->sektor_zablokowany[id_sektora] = 0;
+
+    printf("Pracownik sektora %d gotowy (PID: %d).\n", id_sektora, getpid());
 
     while (1) {
+        if (stan_hali->ewakuacja_trwa) {
+            handler_ewakuacja(0);
+        }
         sleep(1);
     }
 
