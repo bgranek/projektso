@@ -93,6 +93,8 @@ int main() {
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
 
+    signal(SYGNAL_EWAKUACJA, SIG_IGN);
+
     inicjalizuj();
 
     printf("Kierownik uruchomiony. PID: %d\n", getpid());
