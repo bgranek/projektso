@@ -116,6 +116,20 @@ void sprobuj_kupic_bilet() {
     }
 }
 
+void idz_do_bramki() {
+    if (!ma_bilet) return;
+    
+    sleep(1);
+    
+    if (stan_hali->sektor_zablokowany[numer_sektora]) {
+        printf("Kibic %d: Sektor %d zablokowany. Czekam...\n", getpid(), numer_sektora);
+        while (stan_hali->sektor_zablokowany[numer_sektora]) {
+            if (stan_hali->ewakuacja_trwa) return;
+            sleep(1);
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
@@ -142,6 +156,10 @@ int main(int argc, char *argv[]) {
            jestem_vip ? "TAK" : "NIE");
 
     sprobuj_kupic_bilet();
+
+    if (ma_bilet) {
+        idz_do_bramki();
+    }
 
     return 0;
 }
