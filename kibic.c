@@ -174,8 +174,8 @@ int main(int argc, char *argv[]) {
     }
 
     moja_druzyna = (rand() % 2) ? DRUZYNA_A : DRUZYNA_B;
-//    jestem_vip = ((rand() % 100) < 1);
-    jestem_vip = 1;
+    jestem_vip = ((rand() % 100) < 1);
+//    jestem_vip = 1;   -   zmiana pod testy
 
     printf("Kibic %d: Start. Druzyna: %c, VIP: %s\n", 
            getpid(), 
