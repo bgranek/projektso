@@ -8,6 +8,8 @@ StanHali *stan_hali = NULL;
 
 int moja_druzyna = 0;
 int jestem_vip = 0;
+int ma_bilet = 0;
+int numer_sektora = -1;
 
 void obsluga_wyjscia() {
     if (stan_hali != NULL) {
@@ -76,6 +78,44 @@ void aktualizuj_kolejke(int zmiana) {
     semop(sem_id, operacje, 1);
 }
 
+void sprobuj_kupic_bilet() {
+    if (!jestem_vip) {
+        aktualizuj_kolejke(1);
+    }
+
+    KomunikatBilet msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.mtype = TYP_KOMUNIKATU_ZAPYTANIE;
+    msg.pid_kibica = getpid();
+    msg.id_druzyny = moja_druzyna;
+    msg.czy_vip = jestem_vip;
+    msg.nr_sektora = -1; 
+
+    if (msgsnd(msg_id, &msg, sizeof(KomunikatBilet) - sizeof(long), 0) == -1) {
+        if (!jestem_vip) aktualizuj_kolejke(-1);
+        return;
+    }
+
+    OdpowiedzBilet odp;
+    if (msgrcv(msg_id, &odp, sizeof(OdpowiedzBilet) - sizeof(long), getpid(), 0) == -1) {
+        if (!jestem_vip) aktualizuj_kolejke(-1);
+        return;
+    }
+
+    if (!jestem_vip) {
+        aktualizuj_kolejke(-1);
+    }
+
+    if (odp.czy_sukces) {
+        ma_bilet = 1;
+        numer_sektora = odp.przydzielony_sektor;
+        printf("Kibic %d (Druzyna %c): Kupilem bilet do sektora %d.\n", 
+               getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', numer_sektora);
+    } else {
+        printf("Kibic %d: Brak biletow.\n", getpid());
+    }
+}
+
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
@@ -100,6 +140,8 @@ int main(int argc, char *argv[]) {
            getpid(), 
            (moja_druzyna == DRUZYNA_A) ? 'A' : 'B',
            jestem_vip ? "TAK" : "NIE");
+
+    sprobuj_kupic_bilet();
 
     return 0;
 }
