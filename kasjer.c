@@ -43,9 +43,13 @@ void obsluz_klienta() {
     KomunikatBilet zapytanie;
     
     if (msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long), TYP_KOMUNIKATU_ZAPYTANIE, IPC_NOWAIT) == -1) {
-        if (errno != ENOMSG) {
-            perror("msgrcv");
+        if (errno == ENOMSG) {
+            return;
         }
+        if (errno == EIDRM || errno == EINVAL) {
+            exit(0);
+        }
+        perror("msgrcv");
         return;
     }
 
@@ -55,6 +59,7 @@ void obsluz_klienta() {
     operacje[0].sem_flg = 0;
     
     if (semop(sem_id, operacje, 1) == -1) {
+        if (errno == EIDRM || errno == EINVAL) exit(0);
         perror("semop P");
         return;
     }
@@ -78,11 +83,13 @@ void obsluz_klienta() {
     }
 
     OdpowiedzBilet odpowiedz;
+    memset(&odpowiedz, 0, sizeof(odpowiedz));
     odpowiedz.mtype = zapytanie.pid_kibica;
     odpowiedz.przydzielony_sektor = znaleziono_sektor;
     odpowiedz.czy_sukces = (znaleziono_sektor != -1) ? 1 : 0;
 
     if (msgsnd(msg_id, &odpowiedz, sizeof(OdpowiedzBilet) - sizeof(long), 0) == -1) {
+        if (errno == EIDRM || errno == EINVAL) exit(0);
         perror("msgsnd");
     } else {
         if (odpowiedz.czy_sukces) {
@@ -95,6 +102,7 @@ void obsluz_klienta() {
 }
 
 int main(int argc, char *argv[]) {
+    (void)argc;
     if (argc != 2) {
         fprintf(stderr, "Uzycie: %s <nr_kasjera>\n", argv[0]);
         exit(EXIT_FAILURE);
