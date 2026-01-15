@@ -128,6 +128,32 @@ void idz_do_bramki() {
             sleep(1);
         }
     }
+
+    struct sembuf operacje[1];
+    operacje[0].sem_num = 0; 
+    operacje[0].sem_op = -1;
+    operacje[0].sem_flg = 0;
+    
+    if (semop(sem_id, operacje, 1) == -1) return;
+
+    stan_hali->suma_kibicow_w_hali++;
+    
+    operacje[0].sem_op = 1;
+    semop(sem_id, operacje, 1);
+
+    printf("Kibic %d: Wszedlem na sektor %d. Ogladam mecz...\n", getpid(), numer_sektora);
+    
+    sleep(5); 
+
+    operacje[0].sem_op = -1;
+    semop(sem_id, operacje, 1);
+    
+    stan_hali->suma_kibicow_w_hali--;
+    
+    operacje[0].sem_op = 1;
+    semop(sem_id, operacje, 1);
+
+    printf("Kibic %d: Wychodze.\n", getpid());
 }
 
 int main(int argc, char *argv[]) {
