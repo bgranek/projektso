@@ -113,6 +113,7 @@ int main(int argc, char *argv[]) {
     (void)argv;
 
     signal(SIGINT, obsluga_sygnalow);
+    signal(SIGCHLD, SIG_IGN); 
     
     srand(time(NULL));
     inicjalizuj_zasoby();
