@@ -2,6 +2,7 @@
 
 int id_sektora = -1;
 int shm_id = -1;
+int sem_id = -1;
 StanHali *stan_hali = NULL;
 
 void obsluga_wyjscia() {
@@ -16,7 +17,7 @@ void handler_blokada(int sig) {
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 1;
         const char *msg = "SEKTOR ZABLOKOWANY\n";
-        write(STDOUT_FILENO, msg, strlen(msg));
+        if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
     }
 }
 
@@ -25,23 +26,27 @@ void handler_odblokowanie(int sig) {
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 0;
         const char *msg = "SEKTOR ODBLOKOWANY\n";
-        write(STDOUT_FILENO, msg, strlen(msg));
+        if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
     }
 }
 
 void handler_ewakuacja(int sig) {
     (void)sig;
     const char *msg = "EWAKUACJA! Otwieram bramki awaryjne.\n";
-    write(STDOUT_FILENO, msg, strlen(msg));
-    exit(0);
+    if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
 }
 
 void inicjalizuj() {
     key_t klucz_shm = ftok(".", KLUCZ_SHM);
     SPRAWDZ(klucz_shm);
+    key_t klucz_sem = ftok(".", KLUCZ_SEM);
+    SPRAWDZ(klucz_sem);
 
     shm_id = shmget(klucz_shm, sizeof(StanHali), 0600);
     SPRAWDZ(shm_id);
+    
+    sem_id = semget(klucz_sem, 2, 0600);
+    SPRAWDZ(sem_id);
 
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
     if (stan_hali == (void*)-1) {
@@ -65,6 +70,49 @@ void rejestruj_sygnaly() {
     sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
 }
 
+void obsluguj_bramki() {
+    if (stan_hali->ewakuacja_trwa) return;
+    if (stan_hali->sektor_zablokowany[id_sektora]) return;
+
+    struct sembuf operacje[1];
+    operacje[0].sem_num = 0;
+    operacje[0].sem_op = -1;
+    operacje[0].sem_flg = 0;
+    if (semop(sem_id, operacje, 1) == -1) return;
+
+    for (int nr_stanowiska = 0; nr_stanowiska < 2; nr_stanowiska++) {
+        Bramka *b = &stan_hali->bramki[id_sektora][nr_stanowiska];
+
+        int liczba_zajetych = 0;
+        for (int i = 0; i < 3; i++) {
+            if (b->miejsca[i].pid_kibica != 0) {
+                liczba_zajetych++;
+            }
+        }
+
+        if (liczba_zajetych == 0) {
+            b->obecna_druzyna = 0;
+        }
+
+        for (int i = 0; i < 3; i++) {
+            if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
+                if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
+                    
+                    b->obecna_druzyna = b->miejsca[i].druzyna;
+                    b->miejsca[i].zgoda_na_wejscie = 1;
+                    
+                    printf("Pracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c)\n", 
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, 
+                           (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B');
+                }
+            }
+        }
+    }
+
+    operacje[0].sem_op = 1;
+    semop(sem_id, operacje, 1);
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Uzycie: %s <nr_sektora>\n", argv[0]);
@@ -73,7 +121,7 @@ int main(int argc, char *argv[]) {
 
     id_sektora = atoi(argv[1]);
     if (id_sektora < 0 || id_sektora >= LICZBA_SEKTOROW) {
-        fprintf(stderr, "Bledny numer sektora: %d (musi byc 0-%d)\n", id_sektora, LICZBA_SEKTOROW - 1);
+        fprintf(stderr, "Bledny numer sektora: %d\n", id_sektora);
         exit(EXIT_FAILURE);
     }
 
@@ -86,15 +134,15 @@ int main(int argc, char *argv[]) {
     rejestruj_sygnaly();
 
     stan_hali->pidy_pracownikow[id_sektora] = getpid();
-    stan_hali->sektor_zablokowany[id_sektora] = 0;
 
-    printf("Pracownik sektora %d gotowy (PID: %d).\n", id_sektora, getpid());
+    printf("Pracownik sektora %d gotowy (PID: %d). Obsluga 2 stanowisk.\n", id_sektora, getpid());
 
     while (1) {
         if (stan_hali->ewakuacja_trwa) {
-            handler_ewakuacja(0);
+            break;
         }
-        sleep(1);
+        obsluguj_bramki();
+        usleep(200000);
     }
 
     return 0;

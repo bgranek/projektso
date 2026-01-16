@@ -46,38 +46,45 @@
     } while (0)
 
 typedef struct {
+    pid_t pid_kibica;
+    int druzyna;
+    int zgoda_na_wejscie; 
+} MiejscaKolejki;
+
+typedef struct {
+    MiejscaKolejki miejsca[3];
+    int obecna_druzyna;
+    int liczba_oczekujacych;
+} Bramka;
+
+typedef struct {
     int liczniki_sektorow[LICZBA_SEKTOROW];
     int sektor_zablokowany[LICZBA_SEKTOROW];
     int kasa_aktywna[LICZBA_KAS];
     int kolejka_dlugosc[LICZBA_KAS];
+    
+    pid_t pidy_kasjerow[LICZBA_KAS];
+    pid_t pidy_pracownikow[LICZBA_SEKTOROW];
+    pid_t pid_kierownika;
+    
     int suma_kibicow_w_hali;
     int ewakuacja_trwa;
-    
-    struct {
-        int liczba_osob;
-        int obecna_druzyna;
-        pid_t pid_obslugiwanego;
-        int czy_ma_przedmiot;
-        int czy_agresywny;
-    } bramki[LICZBA_SEKTOROW][2];
 
-    pid_t pidy_pracownikow[LICZBA_SEKTOROW];
-    pid_t pidy_kasjerow[LICZBA_KAS];
-    pid_t pid_kierownika;
+    Bramka bramki[LICZBA_SEKTOROW][2];
 } StanHali;
 
 typedef struct {
     long mtype;
     pid_t pid_kibica;
     int id_druzyny;
-    int nr_sektora;
     int czy_vip;
+    int nr_sektora; 
 } KomunikatBilet;
 
 typedef struct {
     long mtype;
-    int czy_sukces;
     int przydzielony_sektor;
+    int czy_sukces;
 } OdpowiedzBilet;
 
 #endif
