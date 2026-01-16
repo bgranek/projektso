@@ -20,8 +20,12 @@ void sprzataj_zasoby() {
     }
 }
 
-void obsluga_sigint(int sig) {
+void obsluga_sygnalow(int sig) {
     (void)sig;
+    kill(0, SIGTERM);
+    while (wait(NULL) > 0);
+    sprzataj_zasoby();
+    printf("\nSymulacja zakonczona. Zasoby posprzatane.\n");
     exit(0);
 }
 
@@ -43,7 +47,7 @@ void inicjalizuj_zasoby() {
     }
 
     memset(stan_hali, 0, sizeof(StanHali));
-    stan_hali->pid_kierownika = getpid();
+    stan_hali->pid_kierownika = getpid(); 
 
     for (int i = 0; i < LICZBA_KAS; i++) {
         if (i < 2) {
@@ -57,7 +61,11 @@ void inicjalizuj_zasoby() {
     SPRAWDZ(sem_id);
 
     if (semctl(sem_id, 0, SETVAL, 1) == -1) {
-        perror("semctl init");
+        perror("semctl init 0");
+        exit(EXIT_FAILURE);
+    }
+    if (semctl(sem_id, 1, SETVAL, 1) == -1) {
+        perror("semctl init 1");
         exit(EXIT_FAILURE);
     }
 
@@ -65,29 +73,69 @@ void inicjalizuj_zasoby() {
     SPRAWDZ(msg_id);
 }
 
-int main() {
-    if (atexit(sprzataj_zasoby) != 0) {
-        perror("atexit");
+void uruchom_kierownika() {
+    pid_t pid = fork();
+    if (pid == 0) {
+        execl("./kierownik", "kierownik", NULL);
+        perror("execl kierownik");
         exit(EXIT_FAILURE);
     }
+}
 
-    struct sigaction sa;
-    sa.sa_handler = obsluga_sigint;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        perror("sigaction");
-        exit(EXIT_FAILURE);
+void uruchom_kasjerow() {
+    for (int i = 0; i < LICZBA_KAS; i++) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            char bufor[10];
+            sprintf(bufor, "%d", i);
+            execl("./kasjer", "kasjer", bufor, NULL);
+            perror("execl kasjer");
+            exit(EXIT_FAILURE);
+        }
     }
+}
 
+void uruchom_pracownikow() {
+    for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            char bufor[10];
+            sprintf(bufor, "%d", i);
+            execl("./pracownik", "pracownik", bufor, NULL);
+            perror("execl pracownik");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+
+int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+
+    signal(SIGINT, obsluga_sygnalow);
+    
+    srand(time(NULL));
     inicjalizuj_zasoby();
 
-    printf("System uruchomiony. PID: %d\n", getpid());
-    printf("Pojemnosc calkowita: %d\n", POJEMNOSC_CALKOWITA);
-    printf("Ctrl+C konczy program.\n");
+    printf("MAIN: Uruchamianie systemu...\n");
 
-    while (1) {
-        sleep(1);
+    uruchom_kierownika();
+    sleep(1); 
+    
+    uruchom_kasjerow();
+    uruchom_pracownikow();
+    sleep(1);
+
+    printf("MAIN: Generowanie kibicow...\n");
+
+    while(1) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            execl("./kibic", "kibic", NULL);
+            perror("execl kibic");
+            exit(EXIT_FAILURE);
+        }
+        usleep((rand() % 400000) + 100000);
     }
 
     return 0;
