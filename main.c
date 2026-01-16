@@ -22,6 +22,7 @@ void sprzataj_zasoby() {
 
 void obsluga_sygnalow(int sig) {
     (void)sig;
+    signal(SIGTERM, SIG_IGN);
     kill(0, SIGTERM);
     while (wait(NULL) > 0);
     sprzataj_zasoby();
