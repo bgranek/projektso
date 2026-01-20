@@ -10,6 +10,7 @@ int moja_druzyna = 0;
 int jestem_vip = 0;
 int ma_bilet = 0;
 int numer_sektora = -1;
+int mam_noz = 0;
 
 void obsluga_wyjscia() {
     if (stan_hali != NULL) {
@@ -123,7 +124,10 @@ void idz_do_bramki() {
         }
     }
 
-    if (jestem_vip) {
+    int proba_vip = jestem_vip;
+    int licznik_frustracji = 0;
+
+    if (proba_vip) {
         printf("Kibic %d (VIP): Wchodze wejsciem dla VIP-ow.\n", getpid());
     } else {
         int wybrane_stanowisko = rand() % 2;
@@ -150,10 +154,20 @@ void idz_do_bramki() {
                     if (b->miejsca[i].pid_kibica == 0) {
                         b->miejsca[i].pid_kibica = getpid();
                         b->miejsca[i].druzyna = moja_druzyna;
+                        b->miejsca[i].ma_przedmiot = mam_noz;
                         b->miejsca[i].zgoda_na_wejscie = 0;
                         moje_miejsce = i;
                         break;
                     }
+                }
+            } else {
+                licznik_frustracji++;
+                if (licznik_frustracji > 10) {
+                    printf("Kibic %d: FRUSTRACJA! Wpycham sie jako VIP (AGRESJA)!\n", getpid());
+                    proba_vip = 1;
+                    operacje[0].sem_op = 1;
+                    semop(sem_id, operacje, 1);
+                    break;
                 }
             }
             
@@ -165,27 +179,47 @@ void idz_do_bramki() {
             }
         }
 
-        printf("Kibic %d: Czekam na kontrole na stanowisku %d...\n", getpid(), wybrane_stanowisko);
+        if (!proba_vip) {
+            printf("Kibic %d: Czekam na kontrole na stanowisku %d...\n", getpid(), wybrane_stanowisko);
+            while (1) {
+                if (stan_hali->ewakuacja_trwa) return;
+                
+                if (stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica == 0) {
+                     if (stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie == 2) {
+                        printf("Kibic %d: Zostalem wyrzucony przez ochrone!\n", getpid());
+                        struct sembuf operacje[1];
+                        operacje[0].sem_num = 0; operacje[0].sem_op = -1; operacje[0].sem_flg = 0;
+                        semop(sem_id, operacje, 1);
+                        
+                        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica = 0;
+                        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie = 0;
+                        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].druzyna = 0;
+                        
+                        operacje[0].sem_op = 1;
+                        semop(sem_id, operacje, 1);
+                        return;
+                     }
+                }
 
-        while (1) {
-            if (stan_hali->ewakuacja_trwa) return;
-            if (stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie == 1) {
-                break;
+                if (stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie == 1) {
+                    break;
+                }
+                usleep(50000);
             }
-            usleep(50000);
+            
+            struct sembuf operacje[1];
+            operacje[0].sem_num = 0;
+            operacje[0].sem_op = -1;
+            operacje[0].sem_flg = 0;
+            semop(sem_id, operacje, 1);
+            
+            stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica = 0;
+            stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie = 0;
+            stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].druzyna = 0;
+            
+            operacje[0].sem_op = 1;
+            semop(sem_id, operacje, 1);
         }
-        
-        struct sembuf operacje[1];
-        operacje[0].sem_num = 0;
-        operacje[0].sem_op = -1;
-        semop(sem_id, operacje, 1);
-        
-        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica = 0;
-        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie = 0;
-        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].druzyna = 0;
-        
-        operacje[0].sem_op = 1;
-        semop(sem_id, operacje, 1);
     }
 
     struct sembuf operacje[1];
@@ -223,8 +257,9 @@ int main(int argc, char *argv[]) {
     if (stan_hali->ewakuacja_trwa) return 0;
     moja_druzyna = (rand() % 2) ? DRUZYNA_A : DRUZYNA_B;
     jestem_vip = ((rand() % 100) < 1);
-    printf("Kibic %d: Start. Druzyna: %c, VIP: %s\n", 
-           getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', jestem_vip ? "TAK" : "NIE");
+    mam_noz = ((rand() % 100) < SZANSA_NA_PRZEDMIOT);
+    printf("Kibic %d: Start. Druzyna: %c, VIP: %s, Noz: %s\n", 
+           getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', jestem_vip ? "TAK" : "NIE", mam_noz ? "TAK" : "NIE");
     sprobuj_kupic_bilet();
     if (ma_bilet) idz_do_bramki();
     return 0;

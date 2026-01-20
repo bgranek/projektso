@@ -39,16 +39,41 @@ void inicjalizuj() {
     }
 }
 
-void obsluz_klienta() {
-    KomunikatBilet zapytanie;
+void aktualizuj_status() {
+    if (id_kasjera < 2) {
+        stan_hali->kasa_aktywna[id_kasjera] = 1;
+        return;
+    }
+
+    int N = 0;
+    int K = 0;
+    for(int i=0; i<LICZBA_KAS; i++) {
+        if(stan_hali->kasa_aktywna[i]) N++;
+        K += stan_hali->kolejka_dlugosc[i];
+    }
+
+    int limit = (POJEMNOSC_CALKOWITA / 10);
+    int potrzebne = (K / limit) + 1;
     
+    if (potrzebne < 2) potrzebne = 2;
+    if (potrzebne > LICZBA_KAS) potrzebne = LICZBA_KAS;
+
+    if (id_kasjera < potrzebne) {
+        stan_hali->kasa_aktywna[id_kasjera] = 1;
+    } else {
+        stan_hali->kasa_aktywna[id_kasjera] = 0;
+    }
+}
+
+void obsluz_klienta() {
+    if (!stan_hali->kasa_aktywna[id_kasjera]) {
+        return;
+    }
+
+    KomunikatBilet zapytanie;
     if (msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long), TYP_KOMUNIKATU_ZAPYTANIE, IPC_NOWAIT) == -1) {
-        if (errno == ENOMSG) {
-            return;
-        }
-        if (errno == EIDRM || errno == EINVAL) {
-            exit(0);
-        }
+        if (errno == ENOMSG) return;
+        if (errno == EIDRM || errno == EINVAL) exit(0);
         perror("msgrcv");
         return;
     }
@@ -57,19 +82,13 @@ void obsluz_klienta() {
     operacje[0].sem_num = 0;
     operacje[0].sem_op = -1;
     operacje[0].sem_flg = 0;
-    
-    if (semop(sem_id, operacje, 1) == -1) {
-        if (errno == EIDRM || errno == EINVAL) exit(0);
-        perror("semop P");
-        return;
-    }
+    semop(sem_id, operacje, 1);
 
     int znaleziono_sektor = -1;
     int start_sektor = rand() % LICZBA_SEKTOROW;
     
     for (int i = 0; i < LICZBA_SEKTOROW; i++) {
         int idx = (start_sektor + i) % LICZBA_SEKTOROW;
-        
         if (stan_hali->liczniki_sektorow[idx] < POJEMNOSC_SEKTORA) {
             stan_hali->liczniki_sektorow[idx]++;
             znaleziono_sektor = idx;
@@ -78,9 +97,7 @@ void obsluz_klienta() {
     }
 
     operacje[0].sem_op = 1;
-    if (semop(sem_id, operacje, 1) == -1) {
-        perror("semop V");
-    }
+    semop(sem_id, operacje, 1);
 
     OdpowiedzBilet odpowiedz;
     memset(&odpowiedz, 0, sizeof(odpowiedz));
@@ -123,16 +140,15 @@ int main(int argc, char *argv[]) {
     inicjalizuj();
 
     stan_hali->pidy_kasjerow[id_kasjera] = getpid();
-    stan_hali->kasa_aktywna[id_kasjera] = 1;
+    aktualizuj_status();
 
     printf("Kasjer nr %d gotowy (PID: %d). Oczekiwanie na klientow...\n", id_kasjera, getpid());
 
     while (1) {
         if (stan_hali->ewakuacja_trwa) {
-            printf("Kasjer %d: Ewakuacja! Zamykam kase.\n", id_kasjera);
             break;
         }
-        
+        aktualizuj_status();
         obsluz_klienta();
         usleep(100000); 
     }

@@ -71,7 +71,23 @@ void rejestruj_sygnaly() {
 }
 
 void obsluguj_bramki() {
-    if (stan_hali->ewakuacja_trwa) return;
+    if (stan_hali->ewakuacja_trwa) {
+        struct sembuf operacje[1];
+        operacje[0].sem_num = 0; operacje[0].sem_op = -1; operacje[0].sem_flg = 0;
+        semop(sem_id, operacje, 1);
+        
+        int liczba_osob = stan_hali->liczniki_sektorow[id_sektora];
+        
+        operacje[0].sem_op = 1;
+        semop(sem_id, operacje, 1);
+
+        if (liczba_osob == 0) {
+            printf("Pracownik %d: Sektor ewakuowany. Zglaszam do kierownika.\n", id_sektora);
+            usleep(1000000); 
+        }
+        return;
+    }
+    
     if (stan_hali->sektor_zablokowany[id_sektora]) return;
 
     struct sembuf operacje[1];
@@ -96,6 +112,13 @@ void obsluguj_bramki() {
 
         for (int i = 0; i < 3; i++) {
             if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
+                if (b->miejsca[i].ma_przedmiot) {
+                    printf("Pracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Posiada noz!) - Wyrzucam.\n", 
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
+                    b->miejsca[i].zgoda_na_wejscie = 2; 
+                    continue;
+                }
+
                 if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
                     
                     b->obecna_druzyna = b->miejsca[i].druzyna;
@@ -138,9 +161,6 @@ int main(int argc, char *argv[]) {
     printf("Pracownik sektora %d gotowy (PID: %d). Obsluga 2 stanowisk.\n", id_sektora, getpid());
 
     while (1) {
-        if (stan_hali->ewakuacja_trwa) {
-            break;
-        }
         obsluguj_bramki();
         usleep(200000);
     }
