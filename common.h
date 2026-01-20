@@ -26,7 +26,8 @@
 #define POJEMNOSC_SEKTORA (POJEMNOSC_CALKOWITA / LICZBA_SEKTOROW)
 #define LICZBA_KAS 10
 #define LIMIT_VIP 5
-#define SZANSA_NA_PRZEDMIOT 5
+
+#define SZANSA_NA_PRZEDMIOT 20 
 
 #define DRUZYNA_A 1
 #define DRUZYNA_B 2
@@ -49,6 +50,7 @@ typedef struct {
     pid_t pid_kibica;
     int druzyna;
     int ma_przedmiot;
+    int wiek;
     int zgoda_na_wejscie; 
 } MiejscaKolejki;
 

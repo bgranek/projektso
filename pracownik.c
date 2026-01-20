@@ -118,15 +118,23 @@ void obsluguj_bramki() {
                     b->miejsca[i].zgoda_na_wejscie = 2; 
                     continue;
                 }
+                
+                if (b->miejsca[i].wiek < 15) {
+                    if ((rand() % 100) < 10) {
+                         printf("Pracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Wiek %d < 15 bez opiekuna) - Zawracam.\n", 
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek);
+                         b->miejsca[i].zgoda_na_wejscie = 3; 
+                         continue;
+                    }
+                }
 
                 if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
-                    
                     b->obecna_druzyna = b->miejsca[i].druzyna;
-                    b->miejsca[i].zgoda_na_wejscie = 1;
+                    b->miejsca[i].zgoda_na_wejscie = 1; 
                     
-                    printf("Pracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c)\n", 
+                    printf("Pracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c, Wiek %d)\n", 
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, 
-                           (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B');
+                           (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B', b->miejsca[i].wiek);
                 }
             }
         }
@@ -141,6 +149,10 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Uzycie: %s <nr_sektora>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
+    
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    srand((unsigned int)(ts.tv_nsec ^ getpid()));
 
     id_sektora = atoi(argv[1]);
     if (id_sektora < 0 || id_sektora >= LICZBA_SEKTOROW) {

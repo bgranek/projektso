@@ -11,6 +11,7 @@ int jestem_vip = 0;
 int ma_bilet = 0;
 int numer_sektora = -1;
 int mam_noz = 0;
+int moj_wiek = 20;
 
 void obsluga_wyjscia() {
     if (stan_hali != NULL) {
@@ -152,10 +153,13 @@ void idz_do_bramki() {
             if (wolne > 0 && (b->obecna_druzyna == 0 || b->obecna_druzyna == moja_druzyna)) {
                 for (int i = 0; i < 3; i++) {
                     if (b->miejsca[i].pid_kibica == 0) {
-                        b->miejsca[i].pid_kibica = getpid();
+                        // FIX WYSCIGU: Najpierw dane, potem PID!
                         b->miejsca[i].druzyna = moja_druzyna;
                         b->miejsca[i].ma_przedmiot = mam_noz;
+                        b->miejsca[i].wiek = moj_wiek;
                         b->miejsca[i].zgoda_na_wejscie = 0;
+                        // PID wpisujemy na koncu - to sygnal dla Pracownika ze dane sa gotowe
+                        b->miejsca[i].pid_kibica = getpid();
                         moje_miejsce = i;
                         break;
                     }
@@ -185,16 +189,26 @@ void idz_do_bramki() {
                 if (stan_hali->ewakuacja_trwa) return;
                 
                 if (stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica == 0) {
-                     if (stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie == 2) {
-                        printf("Kibic %d: Zostalem wyrzucony przez ochrone!\n", getpid());
+                     int zgoda = stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie;
+                     if (zgoda == 2) {
+                        printf("Kibic %d: Zostalem wyrzucony przez ochrone! (NOZ)\n", getpid());
                         struct sembuf operacje[1];
                         operacje[0].sem_num = 0; operacje[0].sem_op = -1; operacje[0].sem_flg = 0;
                         semop(sem_id, operacje, 1);
-                        
                         stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica = 0;
                         stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie = 0;
                         stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].druzyna = 0;
-                        
+                        operacje[0].sem_op = 1;
+                        semop(sem_id, operacje, 1);
+                        return;
+                     } else if (zgoda == 3) {
+                        printf("Kibic %d: Zostalem zawrocony (WIEK < 15 bez opiekuna)!\n", getpid());
+                        struct sembuf operacje[1];
+                        operacje[0].sem_num = 0; operacje[0].sem_op = -1; operacje[0].sem_flg = 0;
+                        semop(sem_id, operacje, 1);
+                        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica = 0;
+                        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie = 0;
+                        stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].druzyna = 0;
                         operacje[0].sem_op = 1;
                         semop(sem_id, operacje, 1);
                         return;
@@ -251,15 +265,24 @@ void idz_do_bramki() {
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
-    srand(time(NULL) ^ (getpid() << 16));
+    
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    srand((unsigned int)(ts.tv_nsec ^ getpid()));
+    
     if (atexit(obsluga_wyjscia) != 0) exit(EXIT_FAILURE);
     inicjalizuj();
     if (stan_hali->ewakuacja_trwa) return 0;
+    
     moja_druzyna = (rand() % 2) ? DRUZYNA_A : DRUZYNA_B;
     jestem_vip = ((rand() % 100) < 1);
     mam_noz = ((rand() % 100) < SZANSA_NA_PRZEDMIOT);
-    printf("Kibic %d: Start. Druzyna: %c, VIP: %s, Noz: %s\n", 
-           getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', jestem_vip ? "TAK" : "NIE", mam_noz ? "TAK" : "NIE");
+    moj_wiek = (rand() % 60) + 5;
+    
+    printf("Kibic %d: Start. Druzyna: %c, Wiek: %d, VIP: %s, Noz: %s\n", 
+           getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', moj_wiek,
+           jestem_vip ? "TAK" : "NIE", mam_noz ? "TAK" : "NIE");
+           
     sprobuj_kupic_bilet();
     if (ma_bilet) idz_do_bramki();
     return 0;
