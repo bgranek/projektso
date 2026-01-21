@@ -153,12 +153,10 @@ void idz_do_bramki() {
             if (wolne > 0 && (b->obecna_druzyna == 0 || b->obecna_druzyna == moja_druzyna)) {
                 for (int i = 0; i < 3; i++) {
                     if (b->miejsca[i].pid_kibica == 0) {
-                        // FIX WYSCIGU: Najpierw dane, potem PID!
                         b->miejsca[i].druzyna = moja_druzyna;
                         b->miejsca[i].ma_przedmiot = mam_noz;
                         b->miejsca[i].wiek = moj_wiek;
                         b->miejsca[i].zgoda_na_wejscie = 0;
-                        // PID wpisujemy na koncu - to sygnal dla Pracownika ze dane sa gotowe
                         b->miejsca[i].pid_kibica = getpid();
                         moje_miejsce = i;
                         break;
@@ -166,7 +164,7 @@ void idz_do_bramki() {
                 }
             } else {
                 licznik_frustracji++;
-                if (licznik_frustracji > 10) {
+                if (licznik_frustracji > 80) {
                     printf("Kibic %d: FRUSTRACJA! Wpycham sie jako VIP (AGRESJA)!\n", getpid());
                     proba_vip = 1;
                     operacje[0].sem_op = 1;
@@ -233,6 +231,18 @@ void idz_do_bramki() {
             
             operacje[0].sem_op = 1;
             semop(sem_id, operacje, 1);
+        }
+    }
+
+    if (proba_vip) {
+        if (mam_noz) {
+             if (jestem_vip) printf("Kibic %d (VIP): Ochrona VIP znalazla noz! Dyskretnie wyproszony.\n", getpid());
+             else printf("Kibic %d (AGRESOR): Ochrona VIP znalazla noz! Wyrzucony.\n", getpid());
+             return;
+        }
+        if (moj_wiek < 15 && (rand() % 100 < 10)) {
+             printf("Kibic %d (%s): Ochrona VIP: Za mlody bez opiekuna! Wyrzucony.\n", getpid(), jestem_vip ? "VIP" : "AGRESOR");
+             return;
         }
     }
 
