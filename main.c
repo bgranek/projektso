@@ -53,22 +53,22 @@ void inicjalizuj_zasoby() {
     }
 
     memset(stan_hali, 0, sizeof(StanHali));
-    
+
     stan_hali->pojemnosc_calkowita = pojemnosc_K;
     stan_hali->pojemnosc_sektora = pojemnosc_K / LICZBA_SEKTOROW;
-    
-    stan_hali->pid_kierownika = getpid(); 
+    stan_hali->limit_vip = (pojemnosc_K * 3) / 1000;
+    if (stan_hali->limit_vip < 1) stan_hali->limit_vip = 1;
+
+    stan_hali->pid_kierownika = getpid();
+    stan_hali->liczba_vip = 0;
 
     printf("MAIN: Parametry hali:\n");
     printf("  - Pojemnosc calkowita (K): %d\n", stan_hali->pojemnosc_calkowita);
     printf("  - Pojemnosc sektora (K/8): %d\n", stan_hali->pojemnosc_sektora);
+    printf("  - Limit VIP (<0.3%% * K): %d\n", stan_hali->limit_vip);
 
     for (int i = 0; i < LICZBA_KAS; i++) {
-        if (i < 2) {
-            stan_hali->kasa_aktywna[i] = 1;
-        } else {
-            stan_hali->kasa_aktywna[i] = 0;
-        }
+        stan_hali->kasa_aktywna[i] = (i < 2) ? 1 : 0;
     }
 
     sem_id = semget(klucz_sem, 2, IPC_CREAT | 0600);
@@ -170,16 +170,16 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, obsluga_sygnalow);
     signal(SIGTERM, obsluga_sygnalow);
-    signal(SIGCHLD, SIG_IGN); 
-    
+    signal(SIGCHLD, SIG_IGN);
+
     srand(time(NULL));
     inicjalizuj_zasoby();
 
     printf("\nMAIN: Uruchamianie systemu...\n");
 
     uruchom_kierownika();
-    sleep(1); 
-    
+    sleep(1);
+
     uruchom_kasjerow();
     uruchom_pracownikow();
     sleep(1);

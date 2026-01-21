@@ -36,7 +36,6 @@
 
 #define LICZBA_SEKTOROW 8
 #define LICZBA_KAS 10
-#define LIMIT_VIP 5
 #define SZANSA_NA_PRZEDMIOT 5
 
 #define DRUZYNA_A 1
@@ -61,7 +60,7 @@ typedef struct {
     int druzyna;
     int ma_przedmiot;
     int wiek;
-    int zgoda_na_wejscie; 
+    int zgoda_na_wejscie;
 } MiejscaKolejki;
 
 typedef struct {
@@ -73,17 +72,20 @@ typedef struct {
 typedef struct {
     int pojemnosc_calkowita;
     int pojemnosc_sektora;
+    int limit_vip;
 
     int liczniki_sektorow[LICZBA_SEKTOROW];
     int sektor_zablokowany[LICZBA_SEKTOROW];
+
     int kasa_aktywna[LICZBA_KAS];
     int kolejka_dlugosc[LICZBA_KAS];
-    
+
     pid_t pidy_kasjerow[LICZBA_KAS];
     pid_t pidy_pracownikow[LICZBA_SEKTOROW];
     pid_t pid_kierownika;
-    
+
     int suma_kibicow_w_hali;
+    int liczba_vip;
     int ewakuacja_trwa;
 
     Bramka bramki[LICZBA_SEKTOROW][2];
@@ -94,7 +96,7 @@ typedef struct {
     pid_t pid_kibica;
     int id_druzyny;
     int czy_vip;
-    int nr_sektora; 
+    int nr_sektora;
 } KomunikatBilet;
 
 typedef struct {
