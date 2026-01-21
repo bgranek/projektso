@@ -110,10 +110,11 @@ void obsluz_klienta() {
         perror("msgsnd");
     } else {
         if (odpowiedz.czy_sukces) {
-            printf("Kasjer %d: Sprzedano bilet (Sektor %d) dla PID %d.\n", 
-                   id_kasjera, odpowiedz.przydzielony_sektor, zapytanie.pid_kibica);
+            printf("%sKasjer %d: Sprzedano bilet (Sektor %d) dla PID %d.%s\n", 
+                   KOLOR_ZIELONY, id_kasjera, odpowiedz.przydzielony_sektor, zapytanie.pid_kibica, KOLOR_RESET);
         } else {
-            printf("Kasjer %d: Brak miejsc dla PID %d.\n", id_kasjera, zapytanie.pid_kibica);
+            printf("%sKasjer %d: Brak miejsc dla PID %d.%s\n", 
+                   KOLOR_CZERWONY, id_kasjera, zapytanie.pid_kibica, KOLOR_RESET);
         }
     }
 }
@@ -146,6 +147,7 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         if (stan_hali->ewakuacja_trwa) {
+            printf("Kasjer %d: Ewakuacja - zamykam kase.\n", id_kasjera);
             break;
         }
         aktualizuj_status();

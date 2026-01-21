@@ -80,7 +80,12 @@ void aktualizuj_kolejke(int zmiana) {
 }
 
 void sprobuj_kupic_bilet() {
-    if (!jestem_vip) aktualizuj_kolejke(1);
+    if (!jestem_vip) {
+        aktualizuj_kolejke(1);
+    } else {
+        printf("%sKibic %d (VIP): Omijam kolejke do kasy.%s\n",
+               KOLOR_MAGENTA, getpid(), KOLOR_RESET);
+    }
 
     KomunikatBilet msg;
     memset(&msg, 0, sizeof(msg));
@@ -106,10 +111,10 @@ void sprobuj_kupic_bilet() {
     if (odp.czy_sukces) {
         ma_bilet = 1;
         numer_sektora = odp.przydzielony_sektor;
-        printf("Kibic %d (Druzyna %c): Kupilem bilet do sektora %d.\n", 
-               getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', numer_sektora);
+        printf("%sKibic %d (Druzyna %c): Kupilem bilet do sektora %d.%s\n", 
+               KOLOR_ZIELONY, getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', numer_sektora, KOLOR_RESET);
     } else {
-        printf("Kibic %d: Brak biletow.\n", getpid());
+        printf("%sKibic %d: Brak biletow.%s\n", KOLOR_CZERWONY, getpid(), KOLOR_RESET);
     }
 }
 
@@ -118,7 +123,8 @@ void idz_do_bramki() {
     sleep(1);
     
     if (stan_hali->sektor_zablokowany[numer_sektora]) {
-        printf("Kibic %d: Sektor %d zablokowany. Czekam...\n", getpid(), numer_sektora);
+        printf("%sKibic %d: Sektor %d zablokowany. Czekam...%s\n", 
+               KOLOR_ZOLTY, getpid(), numer_sektora, KOLOR_RESET);
         while (stan_hali->sektor_zablokowany[numer_sektora]) {
             if (stan_hali->ewakuacja_trwa) return;
             sleep(1);
@@ -129,7 +135,8 @@ void idz_do_bramki() {
     int licznik_frustracji = 0;
 
     if (proba_vip) {
-        printf("Kibic %d (VIP): Wchodze wejsciem dla VIP-ow.\n", getpid());
+        printf("%sKibic %d (VIP): Wchodze wejsciem dla VIP-ow.%s\n", 
+               KOLOR_MAGENTA, getpid(), KOLOR_RESET);
     } else {
         int wybrane_stanowisko = rand() % 2;
         int moje_miejsce = -1;
@@ -165,7 +172,8 @@ void idz_do_bramki() {
             } else {
                 licznik_frustracji++;
                 if (licznik_frustracji > 80) {
-                    printf("Kibic %d: FRUSTRACJA! Wpycham sie jako VIP (AGRESJA)!\n", getpid());
+                    printf("%sKibic %d: FRUSTRACJA! Wpycham sie jako VIP (AGRESJA)!%s\n", 
+                           KOLOR_CZERWONY, getpid(), KOLOR_RESET);
                     proba_vip = 1;
                     operacje[0].sem_op = 1;
                     semop(sem_id, operacje, 1);
@@ -189,7 +197,8 @@ void idz_do_bramki() {
                 if (stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].pid_kibica == 0) {
                      int zgoda = stan_hali->bramki[numer_sektora][wybrane_stanowisko].miejsca[moje_miejsce].zgoda_na_wejscie;
                      if (zgoda == 2) {
-                        printf("Kibic %d: Zostalem wyrzucony przez ochrone! (NOZ)\n", getpid());
+                        printf("%sKibic %d: Zostalem wyrzucony przez ochrone! (NOZ)%s\n", 
+                               KOLOR_CZERWONY, getpid(), KOLOR_RESET);
                         struct sembuf operacje[1];
                         operacje[0].sem_num = 0; operacje[0].sem_op = -1; operacje[0].sem_flg = 0;
                         semop(sem_id, operacje, 1);
@@ -200,7 +209,8 @@ void idz_do_bramki() {
                         semop(sem_id, operacje, 1);
                         return;
                      } else if (zgoda == 3) {
-                        printf("Kibic %d: Zostalem zawrocony (WIEK < 15 bez opiekuna)!\n", getpid());
+                        printf("%sKibic %d: Zostalem zawrocony (WIEK < 15 bez opiekuna)!%s\n", 
+                               KOLOR_ZOLTY, getpid(), KOLOR_RESET);
                         struct sembuf operacje[1];
                         operacje[0].sem_num = 0; operacje[0].sem_op = -1; operacje[0].sem_flg = 0;
                         semop(sem_id, operacje, 1);
@@ -236,12 +246,15 @@ void idz_do_bramki() {
 
     if (proba_vip) {
         if (mam_noz) {
-             if (jestem_vip) printf("Kibic %d (VIP): Ochrona VIP znalazla noz! Dyskretnie wyproszony.\n", getpid());
-             else printf("Kibic %d (AGRESOR): Ochrona VIP znalazla noz! Wyrzucony.\n", getpid());
+             if (jestem_vip) printf("%sKibic %d (VIP): Ochrona VIP znalazla noz! Dyskretnie wyproszony.%s\n", 
+                                   KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+             else printf("%sKibic %d (AGRESOR): Ochrona VIP znalazla noz! Wyrzucony.%s\n", 
+                        KOLOR_CZERWONY, getpid(), KOLOR_RESET);
              return;
         }
         if (moj_wiek < 15 && (rand() % 100 < 10)) {
-             printf("Kibic %d (%s): Ochrona VIP: Za mlody bez opiekuna! Wyrzucony.\n", getpid(), jestem_vip ? "VIP" : "AGRESOR");
+             printf("%sKibic %d (%s): Ochrona VIP: Za mlody bez opiekuna! Wyrzucony.%s\n", 
+                    KOLOR_ZOLTY, getpid(), jestem_vip ? "VIP" : "AGRESOR", KOLOR_RESET);
              return;
         }
     }
@@ -257,7 +270,8 @@ void idz_do_bramki() {
     operacje[0].sem_op = 1;
     semop(sem_id, operacje, 1);
 
-    printf("Kibic %d: Wszedlem na sektor %d. Ogladam mecz...\n", getpid(), numer_sektora);
+    printf("%sKibic %d: Wszedlem na sektor %d. Ogladam mecz...%s\n", 
+           KOLOR_ZIELONY, getpid(), numer_sektora, KOLOR_RESET);
     sleep(5); 
 
     operacje[0].sem_num = 0;

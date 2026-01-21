@@ -16,6 +16,15 @@
 #include <string.h>
 #include <fcntl.h>
 
+#define KOLOR_RESET    "\033[0m"
+#define KOLOR_CZERWONY "\033[31m"
+#define KOLOR_ZIELONY  "\033[32m"
+#define KOLOR_ZOLTY    "\033[33m"
+#define KOLOR_NIEBIESKI "\033[34m"
+#define KOLOR_MAGENTA  "\033[35m"
+#define KOLOR_CYAN     "\033[36m"
+#define KOLOR_BOLD     "\033[1m"
+
 #define ID_PROJEKTU 'H'
 #define KLUCZ_SHM 100
 #define KLUCZ_SEM 101

@@ -16,7 +16,7 @@ void handler_blokada(int sig) {
     (void)sig;
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 1;
-        const char *msg = "SEKTOR ZABLOKOWANY\n";
+        const char *msg = "[BLOKADA] SEKTOR ZABLOKOWANY\n";
         if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
     }
 }
@@ -25,14 +25,14 @@ void handler_odblokowanie(int sig) {
     (void)sig;
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 0;
-        const char *msg = "SEKTOR ODBLOKOWANY\n";
+        const char *msg = "[ODBLOKOWANIE] SEKTOR ODBLOKOWANY\n";
         if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
     }
 }
 
 void handler_ewakuacja(int sig) {
     (void)sig;
-    const char *msg = "EWAKUACJA! Otwieram bramki awaryjne.\n";
+    const char *msg = "[EWAKUACJA] Otwieram bramki awaryjne.\n";
     if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
 }
 
@@ -113,16 +113,16 @@ void obsluguj_bramki() {
         for (int i = 0; i < 3; i++) {
             if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
                 if (b->miejsca[i].ma_przedmiot) {
-                    printf("Pracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Posiada noz!) - Wyrzucam.\n", 
-                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
+                    printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Posiada noz!) - Wyrzucam.%s\n", 
+                           KOLOR_CZERWONY, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, KOLOR_RESET);
                     b->miejsca[i].zgoda_na_wejscie = 2; 
                     continue;
                 }
                 
                 if (b->miejsca[i].wiek < 15) {
                     if ((rand() % 100) < 10) {
-                         printf("Pracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Wiek %d < 15 bez opiekuna) - Zawracam.\n", 
-                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek);
+                         printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Wiek %d < 15 bez opiekuna) - Zawracam.%s\n", 
+                           KOLOR_ZOLTY, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek, KOLOR_RESET);
                          b->miejsca[i].zgoda_na_wejscie = 3; 
                          continue;
                     }
@@ -132,9 +132,9 @@ void obsluguj_bramki() {
                     b->obecna_druzyna = b->miejsca[i].druzyna;
                     b->miejsca[i].zgoda_na_wejscie = 1; 
                     
-                    printf("Pracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c, Wiek %d)\n", 
-                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, 
-                           (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B', b->miejsca[i].wiek);
+                    printf("%sPracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c, Wiek %d)%s\n", 
+                           KOLOR_ZIELONY, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, 
+                           (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B', b->miejsca[i].wiek, KOLOR_RESET);
                 }
             }
         }
