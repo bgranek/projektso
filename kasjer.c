@@ -52,7 +52,7 @@ void aktualizuj_status() {
         K += stan_hali->kolejka_dlugosc[i];
     }
 
-    int limit = (POJEMNOSC_CALKOWITA / 10);
+    int limit = stan_hali->pojemnosc_calkowita / 10;
     int potrzebne = (K / limit) + 1;
     
     if (potrzebne < 2) potrzebne = 2;
@@ -89,7 +89,7 @@ void obsluz_klienta() {
     
     for (int i = 0; i < LICZBA_SEKTOROW; i++) {
         int idx = (start_sektor + i) % LICZBA_SEKTOROW;
-        if (stan_hali->liczniki_sektorow[idx] < POJEMNOSC_SEKTORA) {
+        if (stan_hali->liczniki_sektorow[idx] < stan_hali->pojemnosc_sektora) {
             stan_hali->liczniki_sektorow[idx]++;
             znaleziono_sektor = idx;
             break;
@@ -120,17 +120,13 @@ void obsluz_klienta() {
 }
 
 int main(int argc, char *argv[]) {
-    (void)argc;
     if (argc != 2) {
         fprintf(stderr, "Uzycie: %s <nr_kasjera>\n", argv[0]);
+        fprintf(stderr, "  nr_kasjera: 0-%d\n", LICZBA_KAS - 1);
         exit(EXIT_FAILURE);
     }
 
-    id_kasjera = atoi(argv[1]);
-    if (id_kasjera < 0 || id_kasjera >= LICZBA_KAS) {
-        fprintf(stderr, "Bledny numer kasjera: %d\n", id_kasjera);
-        exit(EXIT_FAILURE);
-    }
+    id_kasjera = parsuj_int(argv[1], "numer kasjera", 0, LICZBA_KAS - 1);
 
     if (atexit(obsluga_wyjscia) != 0) {
         perror("atexit");
@@ -143,7 +139,10 @@ int main(int argc, char *argv[]) {
     stan_hali->pidy_kasjerow[id_kasjera] = getpid();
     aktualizuj_status();
 
-    printf("Kasjer nr %d gotowy (PID: %d). Oczekiwanie na klientow...\n", id_kasjera, getpid());
+    printf("Kasjer %d gotowy (PID: %d) %s\n",
+           id_kasjera,
+           getpid(),
+           stan_hali->kasa_aktywna[id_kasjera] ? "[AKTYWNA]" : "[NIEAKTYWNA]");
 
     while (1) {
         if (stan_hali->ewakuacja_trwa) {

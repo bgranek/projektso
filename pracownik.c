@@ -113,7 +113,7 @@ void obsluguj_bramki() {
         for (int i = 0; i < 3; i++) {
             if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
                 if (b->miejsca[i].ma_przedmiot) {
-                    printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Posiada noz!) - Wyrzucam.%s\n", 
+                    printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Posiada noz!%s\n", 
                            KOLOR_CZERWONY, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, KOLOR_RESET);
                     b->miejsca[i].zgoda_na_wejscie = 2; 
                     continue;
@@ -121,7 +121,7 @@ void obsluguj_bramki() {
                 
                 if (b->miejsca[i].wiek < 15) {
                     if ((rand() % 100) < 10) {
-                         printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d (Wiek %d < 15 bez opiekuna) - Zawracam.%s\n", 
+                         printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Wiek %d < 15 bez opiekuna%s\n", 
                            KOLOR_ZOLTY, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek, KOLOR_RESET);
                          b->miejsca[i].zgoda_na_wejscie = 3; 
                          continue;
@@ -147,18 +147,15 @@ void obsluguj_bramki() {
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Uzycie: %s <nr_sektora>\n", argv[0]);
+        fprintf(stderr, "  nr_sektora: 0-%d\n", LICZBA_SEKTOROW - 1);
         exit(EXIT_FAILURE);
     }
+
+    id_sektora = parsuj_int(argv[1], "numer sektora", 0, LICZBA_SEKTOROW - 1);
     
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand((unsigned int)(ts.tv_nsec ^ getpid()));
-
-    id_sektora = atoi(argv[1]);
-    if (id_sektora < 0 || id_sektora >= LICZBA_SEKTOROW) {
-        fprintf(stderr, "Bledny numer sektora: %d\n", id_sektora);
-        exit(EXIT_FAILURE);
-    }
 
     if (atexit(obsluga_wyjscia) != 0) {
         perror("atexit");
@@ -170,7 +167,7 @@ int main(int argc, char *argv[]) {
 
     stan_hali->pidy_pracownikow[id_sektora] = getpid();
 
-    printf("Pracownik sektora %d gotowy (PID: %d). Obsluga 2 stanowisk.\n", id_sektora, getpid());
+    printf("Pracownik sektora %d gotowy (PID: %d). Obsluguje 2 stanowiska kontroli.\n", id_sektora, getpid());
 
     while (1) {
         obsluguj_bramki();

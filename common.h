@@ -30,9 +30,11 @@
 #define KLUCZ_SEM 101
 #define KLUCZ_MSG 102
 
-#define POJEMNOSC_CALKOWITA 1600
+#define POJEMNOSC_DOMYSLNA 1600
+#define POJEMNOSC_MIN 80
+#define POJEMNOSC_MAX 100000
+
 #define LICZBA_SEKTOROW 8
-#define POJEMNOSC_SEKTORA (POJEMNOSC_CALKOWITA / LICZBA_SEKTOROW)
 #define LICZBA_KAS 10
 #define LIMIT_VIP 5
 #define SZANSA_NA_PRZEDMIOT 5
@@ -69,6 +71,9 @@ typedef struct {
 } Bramka;
 
 typedef struct {
+    int pojemnosc_calkowita;
+    int pojemnosc_sektora;
+
     int liczniki_sektorow[LICZBA_SEKTOROW];
     int sektor_zablokowany[LICZBA_SEKTOROW];
     int kasa_aktywna[LICZBA_KAS];
@@ -97,5 +102,69 @@ typedef struct {
     int przydzielony_sektor;
     int czy_sukces;
 } OdpowiedzBilet;
+
+static inline int parsuj_int(const char *str, const char *nazwa, int min, int max) {
+    char *endptr;
+    errno = 0;
+    long val = strtol(str, &endptr, 10);
+
+    if (errno != 0) {
+        perror("strtol");
+        fprintf(stderr, "Blad parsowania %s\n", nazwa);
+        exit(EXIT_FAILURE);
+    }
+
+    if (endptr == str || *endptr != '\0') {
+        fprintf(stderr, "Blad: %s musi byc liczba calkowita (podano: '%s')\n", nazwa, str);
+        exit(EXIT_FAILURE);
+    }
+
+    if (val < min || val > max) {
+        fprintf(stderr, "Blad: %s musi byc w zakresie %d-%d (podano: %ld)\n", nazwa, min, max, val);
+        exit(EXIT_FAILURE);
+    }
+
+    return (int)val;
+}
+
+static inline int bezpieczny_scanf_int(const char *prompt, int min, int max) {
+    int wartosc;
+    char bufor[256];
+
+    while (1) {
+        printf("%s", prompt);
+        fflush(stdout);
+
+        if (fgets(bufor, sizeof(bufor), stdin) == NULL) {
+            return -1;
+        }
+
+        bufor[strcspn(bufor, "\n")] = 0;
+
+        if (strlen(bufor) == 0) {
+            printf("Blad: Wprowadz liczbe.\n");
+            continue;
+        }
+
+        char *endptr;
+        errno = 0;
+        long val = strtol(bufor, &endptr, 10);
+
+        if (errno != 0 || *endptr != '\0') {
+            printf("Blad: '%s' nie jest poprawna liczba.\n", bufor);
+            continue;
+        }
+
+        if (val < min || val > max) {
+            printf("Blad: Wartosc musi byc w zakresie %d-%d.\n", min, max);
+            continue;
+        }
+
+        wartosc = (int)val;
+        break;
+    }
+
+    return wartosc;
+}
 
 #endif
