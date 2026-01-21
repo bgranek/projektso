@@ -6,6 +6,10 @@ int msg_id = -1;
 StanHali *stan_hali = NULL;
 int pojemnosc_K = POJEMNOSC_DOMYSLNA;
 
+void usun_fifo() {
+    unlink(FIFO_PRACOWNIK_KIEROWNIK);
+}
+
 void sprzataj_zasoby() {
     if (stan_hali != NULL) {
         shmdt(stan_hali);
@@ -22,6 +26,8 @@ void sprzataj_zasoby() {
         msgctl(msg_id, IPC_RMID, NULL);
         printf("MAIN: Usunieto kolejke komunikatow.\n");
     }
+    usun_fifo();
+    printf("MAIN: Usunieto FIFO.\n");
 }
 
 void obsluga_sygnalow(int sig) {
@@ -33,6 +39,18 @@ void obsluga_sygnalow(int sig) {
     sprzataj_zasoby();
     printf("MAIN: Symulacja zakonczona. Zasoby posprzatane.\n");
     exit(0);
+}
+
+void utworz_fifo() {
+    unlink(FIFO_PRACOWNIK_KIEROWNIK);
+
+    if (mkfifo(FIFO_PRACOWNIK_KIEROWNIK, 0666) == -1) {
+        if (errno != EEXIST) {
+            perror("mkfifo");
+            exit(EXIT_FAILURE);
+        }
+    }
+    printf("MAIN: Utworzono FIFO: %s\n", FIFO_PRACOWNIK_KIEROWNIK);
 }
 
 void inicjalizuj_zasoby() {
@@ -85,6 +103,8 @@ void inicjalizuj_zasoby() {
 
     msg_id = msgget(klucz_msg, IPC_CREAT | 0600);
     SPRAWDZ(msg_id);
+
+    utworz_fifo();
 }
 
 void uruchom_kierownika() {
@@ -188,6 +208,12 @@ int main(int argc, char *argv[]) {
     printf("(Nacisnij Ctrl+C aby zakonczyc)\n\n");
 
     while(1) {
+        if (stan_hali->ewakuacja_trwa) {
+            printf("MAIN: Ewakuacja w toku - wstrzymano generowanie kibicow.\n");
+            sleep(2);
+            continue;
+        }
+
         pid_t pid = fork();
         if (pid == 0) {
             execl("./kibic", "kibic", NULL);

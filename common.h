@@ -10,6 +10,7 @@
 #include <sys/sem.h>
 #include <sys/msg.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <errno.h>
 #include <time.h>
@@ -38,6 +39,8 @@
 #define LICZBA_KAS 10
 #define SZANSA_NA_PRZEDMIOT 5
 
+#define FIFO_PRACOWNIK_KIEROWNIK "/tmp/hala_fifo_ewakuacja"
+
 #define DRUZYNA_A 1
 #define DRUZYNA_B 2
 
@@ -51,6 +54,15 @@
     do { \
         if ((x) == -1) { \
             perror(#x); \
+            exit(EXIT_FAILURE); \
+        } \
+    } while (0)
+
+#define WALIDUJ_ZAKRES(wartosc, min, max, nazwa) \
+    do { \
+        if ((wartosc) < (min) || (wartosc) > (max)) { \
+            fprintf(stderr, "Blad: %s musi byc w zakresie %d-%d (podano: %d)\n", \
+                    nazwa, min, max, wartosc); \
             exit(EXIT_FAILURE); \
         } \
     } while (0)
@@ -76,6 +88,7 @@ typedef struct {
 
     int liczniki_sektorow[LICZBA_SEKTOROW];
     int sektor_zablokowany[LICZBA_SEKTOROW];
+    int sektor_ewakuowany[LICZBA_SEKTOROW];
 
     int kasa_aktywna[LICZBA_KAS];
     int kolejka_dlugosc[LICZBA_KAS];
@@ -104,6 +117,13 @@ typedef struct {
     int przydzielony_sektor;
     int czy_sukces;
 } OdpowiedzBilet;
+
+typedef struct {
+    int typ;
+    int nr_sektora;
+    pid_t pid_pracownika;
+    char wiadomosc[128];
+} KomunikatFifo;
 
 static inline int parsuj_int(const char *str, const char *nazwa, int min, int max) {
     char *endptr;

@@ -1,9 +1,14 @@
 #include "common.h"
+#include <poll.h>
 
 int shm_id = -1;
+int fifo_fd = -1;
 StanHali *stan_hali = NULL;
 
 void obsluga_wyjscia() {
+    if (fifo_fd != -1) {
+        close(fifo_fd);
+    }
     if (stan_hali != NULL) {
         shmdt(stan_hali);
     }
@@ -11,6 +16,7 @@ void obsluga_wyjscia() {
 
 void obsluga_sigint(int sig) {
     (void)sig;
+    printf("\nKierownik: Zamykanie...\n");
     exit(0);
 }
 
@@ -26,59 +32,191 @@ void inicjalizuj() {
         perror("shmat");
         exit(EXIT_FAILURE);
     }
+
+    fifo_fd = open(FIFO_PRACOWNIK_KIEROWNIK, O_RDONLY | O_NONBLOCK);
+    if (fifo_fd == -1) {
+        perror("open FIFO (kierownik)");
+    } else {
+        printf("Kierownik: Otwarto FIFO do odbioru zgloszen.\n");
+    }
+}
+
+void sprawdz_zgloszenia_fifo() {
+    if (fifo_fd == -1) return;
+
+    KomunikatFifo kom;
+    ssize_t odczytano;
+
+    while ((odczytano = read(fifo_fd, &kom, sizeof(KomunikatFifo))) > 0) {
+        if (odczytano == sizeof(KomunikatFifo)) {
+            printf("\n%s", KOLOR_CYAN);
+            printf("+========================================+\n");
+            printf("|       ZGLOSZENIE OD PRACOWNIKA         |\n");
+            printf("+========================================+\n");
+            printf("| Sektor: %d\n", kom.nr_sektora);
+            printf("| PID pracownika: %d\n", kom.pid_pracownika);
+            printf("| Typ: %s\n", kom.typ == 1 ? "EWAKUACJA ZAKONCZONA" : "INNE");
+            printf("| Wiadomosc: %s\n", kom.wiadomosc);
+            printf("+========================================+\n");
+            printf("%s\n", KOLOR_RESET);
+
+            if (kom.typ == 1) {
+                stan_hali->sektor_ewakuowany[kom.nr_sektora] = 1;
+
+                int wszystkie = 1;
+                for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+                    if (!stan_hali->sektor_ewakuowany[i]) {
+                        wszystkie = 0;
+                        break;
+                    }
+                }
+                if (wszystkie) {
+                    printf("%s[INFO] WSZYSTKIE SEKTORY EWAKUOWANE! Hala pusta.%s\n",
+                           KOLOR_ZIELONY, KOLOR_RESET);
+                }
+            }
+        }
+    }
+}
+
+void pokaz_status() {
+    printf("\n%s", KOLOR_BOLD);
+    printf("+=========================================================+\n");
+    printf("|                      STATUS HALI                        |\n");
+    printf("+=========================================================+\n");
+    printf("%s", KOLOR_RESET);
+    printf("| Pojemnosc: %d | Kibicow w hali: %d | VIP: %d/%d\n",
+           stan_hali->pojemnosc_calkowita,
+           stan_hali->suma_kibicow_w_hali,
+           stan_hali->liczba_vip,
+           stan_hali->limit_vip);
+    printf("+---------------------------------------------------------+\n");
+    printf("| SEKTORY:\n");
+
+    for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+        char status[32] = "";
+        if (stan_hali->sektor_zablokowany[i]) strcat(status, "[ZABLOK]");
+        if (stan_hali->sektor_ewakuowany[i]) strcat(status, "[EWAK]");
+        if (strlen(status) == 0) strcpy(status, "[OK]");
+
+        char *kolor = KOLOR_ZIELONY;
+        if (stan_hali->sektor_zablokowany[i]) kolor = KOLOR_CZERWONY;
+        else if (stan_hali->sektor_ewakuowany[i]) kolor = KOLOR_ZOLTY;
+
+        printf("|  %s[%d] %3d/%3d %s%s\n",
+               kolor,
+               i,
+               stan_hali->liczniki_sektorow[i],
+               stan_hali->pojemnosc_sektora,
+               status,
+               KOLOR_RESET);
+    }
+
+    printf("+---------------------------------------------------------+\n");
+    printf("| KASY: ");
+    for (int i = 0; i < LICZBA_KAS; i++) {
+        if (stan_hali->kasa_aktywna[i]) {
+            printf("%s[%d]%s ", KOLOR_ZIELONY, i, KOLOR_RESET);
+        } else {
+            printf("%s[%d]%s ", KOLOR_CZERWONY, i, KOLOR_RESET);
+        }
+    }
+    printf("\n");
+
+    printf("| Ewakuacja: %s%s%s\n",
+           stan_hali->ewakuacja_trwa ? KOLOR_CZERWONY : KOLOR_ZIELONY,
+           stan_hali->ewakuacja_trwa ? "TAK" : "NIE",
+           KOLOR_RESET);
+    printf("+=========================================================+\n");
 }
 
 void wyslij_blokade() {
-    int nr_sektora;
-    printf("Podaj numer sektora do zablokowania (0-%d): ", LICZBA_SEKTOROW - 1);
-    if (scanf("%d", &nr_sektora) != 1) return;
+    int nr_sektora = bezpieczny_scanf_int(
+        "Podaj numer sektora do zablokowania (0-7): ",
+        0,
+        LICZBA_SEKTOROW - 1
+    );
 
-    if (nr_sektora < 0 || nr_sektora >= LICZBA_SEKTOROW) {
-        printf("Bledny numer sektora.\n");
+    if (nr_sektora < 0) {
+        printf("Anulowano.\n");
+        return;
+    }
+
+    if (stan_hali->sektor_zablokowany[nr_sektora]) {
+        printf("%s[UWAGA] Sektor %d jest juz zablokowany.%s\n",
+               KOLOR_ZOLTY, nr_sektora, KOLOR_RESET);
         return;
     }
 
     pid_t pid = stan_hali->pidy_pracownikow[nr_sektora];
     if (pid > 0) {
         if (kill(pid, SYGNAL_BLOKADA_SEKTORA) == 0) {
-            printf("Wyslano sygnal BLOKADA do pracownika sektora %d (PID: %d)\n", nr_sektora, pid);
+            printf("%s[OK] Wyslano sygnal BLOKADA do pracownika sektora %d (PID: %d)%s\n",
+                   KOLOR_ZIELONY, nr_sektora, pid, KOLOR_RESET);
         } else {
-            perror("kill");
+            perror("kill blokada");
         }
     } else {
-        printf("Brak aktywnego pracownika w sektorze %d.\n", nr_sektora);
+        printf("%s[BLAD] Brak aktywnego pracownika w sektorze %d.%s\n",
+               KOLOR_CZERWONY, nr_sektora, KOLOR_RESET);
     }
 }
 
 void wyslij_odblokowanie() {
-    int nr_sektora;
-    printf("Podaj numer sektora do odblokowania (0-%d): ", LICZBA_SEKTOROW - 1);
-    if (scanf("%d", &nr_sektora) != 1) return;
+    int nr_sektora = bezpieczny_scanf_int(
+        "Podaj numer sektora do odblokowania (0-7): ",
+        0,
+        LICZBA_SEKTOROW - 1
+    );
 
-    if (nr_sektora < 0 || nr_sektora >= LICZBA_SEKTOROW) {
-        printf("Bledny numer sektora.\n");
+    if (nr_sektora < 0) {
+        printf("Anulowano.\n");
+        return;
+    }
+
+    if (!stan_hali->sektor_zablokowany[nr_sektora]) {
+        printf("%s[UWAGA] Sektor %d nie jest zablokowany.%s\n",
+               KOLOR_ZOLTY, nr_sektora, KOLOR_RESET);
         return;
     }
 
     pid_t pid = stan_hali->pidy_pracownikow[nr_sektora];
     if (pid > 0) {
         if (kill(pid, SYGNAL_ODBLOKOWANIE_SEKTORA) == 0) {
-            printf("Wyslano sygnal ODBLOKOWANIE do pracownika sektora %d (PID: %d)\n", nr_sektora, pid);
+            printf("%s[OK] Wyslano sygnal ODBLOKOWANIE do pracownika sektora %d (PID: %d)%s\n",
+                   KOLOR_ZIELONY, nr_sektora, pid, KOLOR_RESET);
         } else {
-            perror("kill");
+            perror("kill odblokowanie");
         }
     } else {
-        printf("Brak aktywnego pracownika w sektorze %d.\n", nr_sektora);
+        printf("%s[BLAD] Brak aktywnego pracownika w sektorze %d.%s\n",
+               KOLOR_CZERWONY, nr_sektora, KOLOR_RESET);
     }
 }
 
 void zarzadzaj_ewakuacja() {
-    printf("UWAGA: OGLASZAM EWAKUACJE HALI!\n");
+    if (stan_hali->ewakuacja_trwa) {
+        printf("%s[UWAGA] Ewakuacja juz trwa!%s\n", KOLOR_ZOLTY, KOLOR_RESET);
+        return;
+    }
+
+    printf("\n%s", KOLOR_CZERWONY);
+    printf("+=======================================+\n");
+    printf("|   UWAGA: OGLASZAM EWAKUACJE HALI!     |\n");
+    printf("+=======================================+\n");
+    printf("%s\n", KOLOR_RESET);
+
+    for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+        stan_hali->sektor_ewakuowany[i] = 0;
+    }
+
     stan_hali->ewakuacja_trwa = 1;
-    
+
     if (kill(0, SYGNAL_EWAKUACJA) == -1) {
         perror("kill ewakuacja");
     }
+
+    printf("Oczekiwanie na zgloszenia od pracownikow...\n");
 }
 
 int main() {
@@ -97,22 +235,34 @@ int main() {
 
     inicjalizuj();
 
-    printf("Kierownik uruchomiony. PID: %d\n", getpid());
+    printf("\n%s", KOLOR_BOLD);
+    printf("+=======================================+\n");
+    printf("|        PANEL KIEROWNIKA HALI          |\n");
+    printf("+=======================================+\n");
+    printf("|  PID: %-10d                      |\n", getpid());
+    printf("+=======================================+\n");
+    printf("%s", KOLOR_RESET);
+
     stan_hali->pid_kierownika = getpid();
 
     while (1) {
-        printf("\n--- PANEL KIEROWNIKA ---\n");
-        printf("1. Zablokuj sektor\n");
-        printf("2. Odblokuj sektor\n");
-        printf("3. Oglos ewakuacje\n");
-        printf("4. Wyjscie\n");
-        printf("Wybierz opcje: ");
+        sprawdz_zgloszenia_fifo();
 
-        int opcja;
-        if (scanf("%d", &opcja) != 1) {
-            int c;
-            while ((c = getchar()) != '\n' && c != EOF);
-            continue;
+        printf("\n+-------------------------------+\n");
+        printf("|        MENU KIEROWNIKA        |\n");
+        printf("+-------------------------------+\n");
+        printf("|  1. Zablokuj sektor           |\n");
+        printf("|  2. Odblokuj sektor           |\n");
+        printf("|  3. Oglos ewakuacje           |\n");
+        printf("|  4. Pokaz status              |\n");
+        printf("|  5. Wyjscie                   |\n");
+        printf("+-------------------------------+\n");
+
+        int opcja = bezpieczny_scanf_int("Wybierz opcje (1-5): ", 1, 5);
+
+        if (opcja < 0) {
+            printf("\nKierownik: Koniec wejscia. Zamykanie...\n");
+            break;
         }
 
         switch (opcja) {
@@ -126,11 +276,16 @@ int main() {
                 zarzadzaj_ewakuacja();
                 break;
             case 4:
+                pokaz_status();
+                break;
+            case 5:
+                printf("Kierownik: Do widzenia!\n");
                 exit(0);
             default:
                 printf("Nieznana opcja.\n");
         }
-        sleep(1);
+
+        usleep(100000);
     }
 
     return 0;

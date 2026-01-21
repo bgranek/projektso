@@ -47,21 +47,22 @@ void aktualizuj_status() {
 
     int N = 0;
     int K = 0;
-    for(int i=0; i<LICZBA_KAS; i++) {
+
+    for(int i = 0; i < LICZBA_KAS; i++) {
         if(stan_hali->kasa_aktywna[i]) N++;
         K += stan_hali->kolejka_dlugosc[i];
     }
 
     int limit = stan_hali->pojemnosc_calkowita / 10;
     int potrzebne = (K / limit) + 1;
-    
+
     if (potrzebne < 2) potrzebne = 2;
     if (potrzebne > LICZBA_KAS) potrzebne = LICZBA_KAS;
 
-    if (id_kasjera < potrzebne) {
-        stan_hali->kasa_aktywna[id_kasjera] = 1;
-    } else {
+    if (K < limit * (N - 1) && id_kasjera >= potrzebne) {
         stan_hali->kasa_aktywna[id_kasjera] = 0;
+    } else if (id_kasjera < potrzebne) {
+        stan_hali->kasa_aktywna[id_kasjera] = 1;
     }
 }
 
@@ -71,7 +72,8 @@ void obsluz_klienta() {
     }
 
     KomunikatBilet zapytanie;
-    if (msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long), TYP_KOMUNIKATU_ZAPYTANIE, IPC_NOWAIT) == -1) {
+    if (msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long),
+               TYP_KOMUNIKATU_ZAPYTANIE, IPC_NOWAIT) == -1) {
         if (errno == ENOMSG) return;
         if (errno == EIDRM || errno == EINVAL) exit(0);
         perror("msgrcv");
@@ -86,7 +88,7 @@ void obsluz_klienta() {
 
     int znaleziono_sektor = -1;
     int start_sektor = rand() % LICZBA_SEKTOROW;
-    
+
     for (int i = 0; i < LICZBA_SEKTOROW; i++) {
         int idx = (start_sektor + i) % LICZBA_SEKTOROW;
         if (stan_hali->liczniki_sektorow[idx] < stan_hali->pojemnosc_sektora) {
@@ -110,11 +112,19 @@ void obsluz_klienta() {
         perror("msgsnd");
     } else {
         if (odpowiedz.czy_sukces) {
-            printf("%sKasjer %d: Sprzedano bilet (Sektor %d) dla PID %d.%s\n", 
-                   KOLOR_ZIELONY, id_kasjera, odpowiedz.przydzielony_sektor, zapytanie.pid_kibica, KOLOR_RESET);
+            printf("%sKasjer %d: Sprzedano bilet (Sektor %d) dla PID %d %s%s\n",
+                   KOLOR_ZIELONY,
+                   id_kasjera,
+                   odpowiedz.przydzielony_sektor,
+                   zapytanie.pid_kibica,
+                   zapytanie.czy_vip ? "[VIP]" : "",
+                   KOLOR_RESET);
         } else {
-            printf("%sKasjer %d: Brak miejsc dla PID %d.%s\n", 
-                   KOLOR_CZERWONY, id_kasjera, zapytanie.pid_kibica, KOLOR_RESET);
+            printf("%sKasjer %d: Brak miejsc dla PID %d%s\n",
+                   KOLOR_CZERWONY,
+                   id_kasjera,
+                   zapytanie.pid_kibica,
+                   KOLOR_RESET);
         }
     }
 }
@@ -151,7 +161,7 @@ int main(int argc, char *argv[]) {
         }
         aktualizuj_status();
         obsluz_klienta();
-        usleep(100000); 
+        usleep(100000);
     }
 
     return 0;
