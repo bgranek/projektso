@@ -39,8 +39,12 @@
 #define POJEMNOSC_MAX 100000
 
 #define LICZBA_SEKTOROW 8
+#define SEKTOR_VIP 8
+#define LICZBA_WSZYSTKICH_SEKTOROW 9
+
 #define LICZBA_KAS 10
 #define SZANSA_NA_PRZEDMIOT 5
+#define MAX_BILETOW_NA_KIBICA 2
 
 #define FIFO_PRACOWNIK_KIEROWNIK "/tmp/hala_fifo_ewakuacja"
 
@@ -88,14 +92,16 @@ typedef struct {
 typedef struct {
     int pojemnosc_calkowita;
     int pojemnosc_sektora;
+    int pojemnosc_vip;
     int limit_vip;
 
-    int liczniki_sektorow[LICZBA_SEKTOROW];
+    int liczniki_sektorow[LICZBA_WSZYSTKICH_SEKTOROW];
     int sektor_zablokowany[LICZBA_SEKTOROW];
     int sektor_ewakuowany[LICZBA_SEKTOROW];
 
     int kasa_aktywna[LICZBA_KAS];
     int kolejka_dlugosc[LICZBA_KAS];
+    int wszystkie_bilety_sprzedane;
 
     pid_t pidy_kasjerow[LICZBA_KAS];
     pid_t pidy_pracownikow[LICZBA_SEKTOROW];
@@ -113,12 +119,14 @@ typedef struct {
     pid_t pid_kibica;
     int id_druzyny;
     int czy_vip;
+    int liczba_biletow;
     int nr_sektora;
 } KomunikatBilet;
 
 typedef struct {
     long mtype;
     int przydzielony_sektor;
+    int liczba_sprzedanych;
     int czy_sukces;
 } OdpowiedzBilet;
 

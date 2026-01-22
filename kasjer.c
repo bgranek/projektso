@@ -37,13 +37,31 @@ void inicjalizuj() {
         perror("shmat");
         exit(EXIT_FAILURE);
     }
-    
-    if (rejestr_init(NULL) == -1) {
-        fprintf(stderr, "Kasjer %d: Nie udalo sie otworzyc rejestru\n", id_kasjera);
+
+    rejestr_init(NULL);
+}
+
+int sprawdz_czy_wyprzedane() {
+    int suma_sprzedanych = 0;
+    int suma_pojemnosci = 0;
+
+    for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+        suma_sprzedanych += stan_hali->liczniki_sektorow[i];
+        suma_pojemnosci += stan_hali->pojemnosc_sektora;
     }
+
+    suma_sprzedanych += stan_hali->liczniki_sektorow[SEKTOR_VIP];
+    suma_pojemnosci += stan_hali->pojemnosc_vip;
+
+    return suma_sprzedanych >= suma_pojemnosci;
 }
 
 void aktualizuj_status() {
+    if (stan_hali->wszystkie_bilety_sprzedane) {
+        stan_hali->kasa_aktywna[id_kasjera] = 0;
+        return;
+    }
+
     if (id_kasjera < 2) {
         stan_hali->kasa_aktywna[id_kasjera] = 1;
         return;
@@ -70,7 +88,7 @@ void aktualizuj_status() {
     } else if (id_kasjera < potrzebne) {
         stan_hali->kasa_aktywna[id_kasjera] = 1;
     }
-    
+
     if (poprzedni_status != stan_hali->kasa_aktywna[id_kasjera]) {
         rejestr_log("KASJER", "Kasa %d: Status zmieniony na %s",
                    id_kasjera,
@@ -99,15 +117,50 @@ void obsluz_klienta() {
     semop(sem_id, operacje, 1);
 
     int znaleziono_sektor = -1;
-    int start_sektor = rand() % LICZBA_SEKTOROW;
+    int sprzedane_bilety = 0;
+    int zadane_bilety = zapytanie.liczba_biletow;
 
-    for (int i = 0; i < LICZBA_SEKTOROW; i++) {
-        int idx = (start_sektor + i) % LICZBA_SEKTOROW;
-        if (stan_hali->liczniki_sektorow[idx] < stan_hali->pojemnosc_sektora) {
-            stan_hali->liczniki_sektorow[idx]++;
-            znaleziono_sektor = idx;
-            break;
+    if (zadane_bilety < 1) zadane_bilety = 1;
+    if (zadane_bilety > MAX_BILETOW_NA_KIBICA) zadane_bilety = MAX_BILETOW_NA_KIBICA;
+
+    if (zapytanie.czy_vip) {
+        if (stan_hali->liczniki_sektorow[SEKTOR_VIP] + zadane_bilety <= stan_hali->pojemnosc_vip) {
+            stan_hali->liczniki_sektorow[SEKTOR_VIP] += zadane_bilety;
+            znaleziono_sektor = SEKTOR_VIP;
+            sprzedane_bilety = zadane_bilety;
         }
+    } else {
+        int start_sektor = rand() % LICZBA_SEKTOROW;
+
+        for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+            int idx = (start_sektor + i) % LICZBA_SEKTOROW;
+            if (stan_hali->liczniki_sektorow[idx] + zadane_bilety <= stan_hali->pojemnosc_sektora) {
+                stan_hali->liczniki_sektorow[idx] += zadane_bilety;
+                znaleziono_sektor = idx;
+                sprzedane_bilety = zadane_bilety;
+                break;
+            }
+        }
+
+        if (znaleziono_sektor == -1) {
+            for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+                int idx = (start_sektor + i) % LICZBA_SEKTOROW;
+                int wolne = stan_hali->pojemnosc_sektora - stan_hali->liczniki_sektorow[idx];
+                if (wolne > 0) {
+                    stan_hali->liczniki_sektorow[idx] += wolne;
+                    znaleziono_sektor = idx;
+                    sprzedane_bilety = wolne;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (sprawdz_czy_wyprzedane()) {
+        stan_hali->wszystkie_bilety_sprzedane = 1;
+        rejestr_log("KASJER", "Wszystkie bilety sprzedane - zamykanie kas");
+        printf("%sKasjer %d: WSZYSTKIE BILETY SPRZEDANE - zamykam kasy%s\n",
+               KOLOR_ZOLTY, id_kasjera, KOLOR_RESET);
     }
 
     operacje[0].sem_op = 1;
@@ -117,6 +170,7 @@ void obsluz_klienta() {
     memset(&odpowiedz, 0, sizeof(odpowiedz));
     odpowiedz.mtype = zapytanie.pid_kibica;
     odpowiedz.przydzielony_sektor = znaleziono_sektor;
+    odpowiedz.liczba_sprzedanych = sprzedane_bilety;
     odpowiedz.czy_sukces = (znaleziono_sektor != -1) ? 1 : 0;
 
     if (msgsnd(msg_id, &odpowiedz, sizeof(OdpowiedzBilet) - sizeof(long), 0) == -1) {
@@ -124,15 +178,18 @@ void obsluz_klienta() {
         perror("msgsnd");
     } else {
         if (odpowiedz.czy_sukces) {
-            printf("%sKasjer %d: Sprzedano bilet (Sektor %d) dla PID %d %s%s\n",
+            char *typ_sektora = (znaleziono_sektor == SEKTOR_VIP) ? "VIP" : "zwykly";
+            printf("%sKasjer %d: Sprzedano %d bilet(y) (%s sektor %d) dla PID %d %s%s\n",
                    KOLOR_ZIELONY,
                    id_kasjera,
+                   sprzedane_bilety,
+                   typ_sektora,
                    odpowiedz.przydzielony_sektor,
                    zapytanie.pid_kibica,
                    zapytanie.czy_vip ? "[VIP]" : "",
                    KOLOR_RESET);
-            rejestr_log("SPRZEDAZ", "Kasa %d: Bilet sektor %d dla PID %d %s",
-                       id_kasjera, odpowiedz.przydzielony_sektor,
+            rejestr_log("SPRZEDAZ", "Kasa %d: %d bilet(y) sektor %d dla PID %d %s",
+                       id_kasjera, sprzedane_bilety, odpowiedz.przydzielony_sektor,
                        zapytanie.pid_kibica, zapytanie.czy_vip ? "VIP" : "");
         } else {
             printf("%sKasjer %d: Brak miejsc dla PID %d%s\n",
@@ -177,6 +234,17 @@ int main(int argc, char *argv[]) {
             rejestr_log("KASJER", "Kasa %d: Zamknieta - ewakuacja", id_kasjera);
             break;
         }
+
+        if (stan_hali->wszystkie_bilety_sprzedane) {
+            if (stan_hali->kasa_aktywna[id_kasjera]) {
+                stan_hali->kasa_aktywna[id_kasjera] = 0;
+                printf("Kasjer %d: Wszystkie bilety sprzedane - zamykam kase.\n", id_kasjera);
+                rejestr_log("KASJER", "Kasa %d: Zamknieta - wyprzedane", id_kasjera);
+            }
+            sleep(1);
+            continue;
+        }
+
         aktualizuj_status();
         obsluz_klienta();
         usleep(100000);

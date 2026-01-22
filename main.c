@@ -12,7 +12,7 @@ void usun_fifo() {
 
 void sprzataj_zasoby() {
     rejestr_log("MAIN", "Rozpoczynam sprzatanie zasobow");
-    
+
     if (stan_hali != NULL) {
         rejestr_statystyki(
             stan_hali->pojemnosc_calkowita,
@@ -40,7 +40,7 @@ void sprzataj_zasoby() {
     usun_fifo();
     printf("MAIN: Usunieto FIFO.\n");
     rejestr_log("MAIN", "Usunieto FIFO");
-    
+
     rejestr_zamknij();
 }
 
@@ -92,17 +92,21 @@ void inicjalizuj_zasoby() {
     stan_hali->pojemnosc_sektora = pojemnosc_K / LICZBA_SEKTOROW;
     stan_hali->limit_vip = (pojemnosc_K * 3) / 1000;
     if (stan_hali->limit_vip < 1) stan_hali->limit_vip = 1;
+    stan_hali->pojemnosc_vip = stan_hali->limit_vip;
 
     stan_hali->pid_kierownika = getpid();
     stan_hali->liczba_vip = 0;
+    stan_hali->wszystkie_bilety_sprzedane = 0;
 
     printf("MAIN: Parametry hali:\n");
     printf("  - Pojemnosc calkowita (K): %d\n", stan_hali->pojemnosc_calkowita);
     printf("  - Pojemnosc sektora (K/8): %d\n", stan_hali->pojemnosc_sektora);
+    printf("  - Pojemnosc VIP: %d\n", stan_hali->pojemnosc_vip);
     printf("  - Limit VIP (<0.3%% * K): %d\n", stan_hali->limit_vip);
 
     rejestr_log("MAIN", "Pojemnosc calkowita: %d", stan_hali->pojemnosc_calkowita);
     rejestr_log("MAIN", "Pojemnosc sektora: %d", stan_hali->pojemnosc_sektora);
+    rejestr_log("MAIN", "Pojemnosc VIP: %d", stan_hali->pojemnosc_vip);
     rejestr_log("MAIN", "Limit VIP: %d", stan_hali->limit_vip);
 
     for (int i = 0; i < LICZBA_KAS; i++) {
@@ -125,7 +129,7 @@ void inicjalizuj_zasoby() {
     SPRAWDZ(msg_id);
 
     utworz_fifo();
-    
+
     rejestr_log("MAIN", "Zasoby IPC zainicjalizowane");
 }
 
@@ -245,6 +249,11 @@ int main(int argc, char *argv[]) {
             printf("MAIN: Ewakuacja w toku - wstrzymano generowanie kibicow.\n");
             rejestr_log("MAIN", "Ewakuacja - wstrzymano generowanie kibicow");
             sleep(2);
+            continue;
+        }
+
+        if (stan_hali->wszystkie_bilety_sprzedane) {
+            sleep(1);
             continue;
         }
 

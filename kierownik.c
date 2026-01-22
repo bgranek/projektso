@@ -40,10 +40,8 @@ void inicjalizuj() {
     } else {
         printf("Kierownik: Otwarto FIFO do odbioru zgloszen.\n");
     }
-    
-    if (rejestr_init(NULL) == -1) {
-        fprintf(stderr, "Kierownik: Nie udalo sie otworzyc rejestru\n");
-    }
+
+    rejestr_init(NULL);
 }
 
 void sprawdz_zgloszenia_fifo() {
@@ -98,8 +96,10 @@ void pokaz_status() {
            stan_hali->suma_kibicow_w_hali,
            stan_hali->liczba_vip,
            stan_hali->limit_vip);
+    printf("| Bilety: %s\n",
+           stan_hali->wszystkie_bilety_sprzedane ? "WYPRZEDANE" : "DOSTEPNE");
     printf("+---------------------------------------------------------+\n");
-    printf("| SEKTORY:\n");
+    printf("| SEKTORY ZWYKLE (0-7):\n");
 
     for (int i = 0; i < LICZBA_SEKTOROW; i++) {
         char status[32] = "";
@@ -118,11 +118,17 @@ void pokaz_status() {
                stan_hali->pojemnosc_sektora,
                status,
                KOLOR_RESET);
-        
-        rejestr_sektor(i, stan_hali->liczniki_sektorow[i], 
+
+        rejestr_sektor(i, stan_hali->liczniki_sektorow[i],
                       stan_hali->pojemnosc_sektora, stan_hali->sektor_zablokowany[i]);
     }
 
+    printf("+---------------------------------------------------------+\n");
+    printf("| %sSEKTOR VIP: %d/%d%s\n",
+           KOLOR_MAGENTA,
+           stan_hali->liczniki_sektorow[SEKTOR_VIP],
+           stan_hali->pojemnosc_vip,
+           KOLOR_RESET);
     printf("+---------------------------------------------------------+\n");
     printf("| KASY: ");
     for (int i = 0; i < LICZBA_KAS; i++) {
@@ -139,7 +145,7 @@ void pokaz_status() {
            stan_hali->ewakuacja_trwa ? "TAK" : "NIE",
            KOLOR_RESET);
     printf("+=========================================================+\n");
-    
+
     rejestr_statystyki(stan_hali->pojemnosc_calkowita, stan_hali->suma_kibicow_w_hali,
                       stan_hali->liczba_vip, stan_hali->limit_vip);
 }
