@@ -37,6 +37,10 @@ void inicjalizuj() {
         perror("shmat");
         exit(EXIT_FAILURE);
     }
+    
+    if (rejestr_init(NULL) == -1) {
+        fprintf(stderr, "Kasjer %d: Nie udalo sie otworzyc rejestru\n", id_kasjera);
+    }
 }
 
 void aktualizuj_status() {
@@ -59,10 +63,18 @@ void aktualizuj_status() {
     if (potrzebne < 2) potrzebne = 2;
     if (potrzebne > LICZBA_KAS) potrzebne = LICZBA_KAS;
 
+    int poprzedni_status = stan_hali->kasa_aktywna[id_kasjera];
+
     if (K < limit * (N - 1) && id_kasjera >= potrzebne) {
         stan_hali->kasa_aktywna[id_kasjera] = 0;
     } else if (id_kasjera < potrzebne) {
         stan_hali->kasa_aktywna[id_kasjera] = 1;
+    }
+    
+    if (poprzedni_status != stan_hali->kasa_aktywna[id_kasjera]) {
+        rejestr_log("KASJER", "Kasa %d: Status zmieniony na %s",
+                   id_kasjera,
+                   stan_hali->kasa_aktywna[id_kasjera] ? "AKTYWNA" : "NIEAKTYWNA");
     }
 }
 
@@ -119,12 +131,16 @@ void obsluz_klienta() {
                    zapytanie.pid_kibica,
                    zapytanie.czy_vip ? "[VIP]" : "",
                    KOLOR_RESET);
+            rejestr_log("SPRZEDAZ", "Kasa %d: Bilet sektor %d dla PID %d %s",
+                       id_kasjera, odpowiedz.przydzielony_sektor,
+                       zapytanie.pid_kibica, zapytanie.czy_vip ? "VIP" : "");
         } else {
             printf("%sKasjer %d: Brak miejsc dla PID %d%s\n",
                    KOLOR_CZERWONY,
                    id_kasjera,
                    zapytanie.pid_kibica,
                    KOLOR_RESET);
+            rejestr_log("SPRZEDAZ", "Kasa %d: Brak miejsc dla PID %d", id_kasjera, zapytanie.pid_kibica);
         }
     }
 }
@@ -153,10 +169,12 @@ int main(int argc, char *argv[]) {
            id_kasjera,
            getpid(),
            stan_hali->kasa_aktywna[id_kasjera] ? "[AKTYWNA]" : "[NIEAKTYWNA]");
+    rejestr_log("KASJER", "Kasa %d: Start PID %d", id_kasjera, getpid());
 
     while (1) {
         if (stan_hali->ewakuacja_trwa) {
             printf("Kasjer %d: Ewakuacja - zamykam kase.\n", id_kasjera);
+            rejestr_log("KASJER", "Kasa %d: Zamknieta - ewakuacja", id_kasjera);
             break;
         }
         aktualizuj_status();
