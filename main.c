@@ -11,28 +11,43 @@ void usun_fifo() {
 }
 
 void sprzataj_zasoby() {
+    rejestr_log("MAIN", "Rozpoczynam sprzatanie zasobow");
+    
     if (stan_hali != NULL) {
+        rejestr_statystyki(
+            stan_hali->pojemnosc_calkowita,
+            stan_hali->suma_kibicow_w_hali,
+            stan_hali->liczba_vip,
+            stan_hali->limit_vip
+        );
         shmdt(stan_hali);
     }
     if (shm_id != -1) {
         shmctl(shm_id, IPC_RMID, NULL);
         printf("MAIN: Usunieto pamiec dzielona.\n");
+        rejestr_log("MAIN", "Usunieto pamiec dzielona");
     }
     if (sem_id != -1) {
         semctl(sem_id, 0, IPC_RMID);
         printf("MAIN: Usunieto semafory.\n");
+        rejestr_log("MAIN", "Usunieto semafory");
     }
     if (msg_id != -1) {
         msgctl(msg_id, IPC_RMID, NULL);
         printf("MAIN: Usunieto kolejke komunikatow.\n");
+        rejestr_log("MAIN", "Usunieto kolejke komunikatow");
     }
     usun_fifo();
     printf("MAIN: Usunieto FIFO.\n");
+    rejestr_log("MAIN", "Usunieto FIFO");
+    
+    rejestr_zamknij();
 }
 
 void obsluga_sygnalow(int sig) {
     (void)sig;
     printf("\nMAIN: Otrzymano sygnal zakonczenia. Sprzatanie...\n");
+    rejestr_log("MAIN", "Otrzymano sygnal zakonczenia");
     signal(SIGTERM, SIG_IGN);
     kill(0, SIGTERM);
     while (wait(NULL) > 0);
@@ -51,6 +66,7 @@ void utworz_fifo() {
         }
     }
     printf("MAIN: Utworzono FIFO: %s\n", FIFO_PRACOWNIK_KIEROWNIK);
+    rejestr_log("MAIN", "Utworzono FIFO: %s", FIFO_PRACOWNIK_KIEROWNIK);
 }
 
 void inicjalizuj_zasoby() {
@@ -85,6 +101,10 @@ void inicjalizuj_zasoby() {
     printf("  - Pojemnosc sektora (K/8): %d\n", stan_hali->pojemnosc_sektora);
     printf("  - Limit VIP (<0.3%% * K): %d\n", stan_hali->limit_vip);
 
+    rejestr_log("MAIN", "Pojemnosc calkowita: %d", stan_hali->pojemnosc_calkowita);
+    rejestr_log("MAIN", "Pojemnosc sektora: %d", stan_hali->pojemnosc_sektora);
+    rejestr_log("MAIN", "Limit VIP: %d", stan_hali->limit_vip);
+
     for (int i = 0; i < LICZBA_KAS; i++) {
         stan_hali->kasa_aktywna[i] = (i < 2) ? 1 : 0;
     }
@@ -105,6 +125,8 @@ void inicjalizuj_zasoby() {
     SPRAWDZ(msg_id);
 
     utworz_fifo();
+    
+    rejestr_log("MAIN", "Zasoby IPC zainicjalizowane");
 }
 
 void uruchom_kierownika() {
@@ -118,6 +140,7 @@ void uruchom_kierownika() {
         exit(EXIT_FAILURE);
     }
     printf("MAIN: Uruchomiono kierownika (PID: %d)\n", pid);
+    rejestr_log("MAIN", "Uruchomiono kierownika PID: %d", pid);
 }
 
 void uruchom_kasjerow() {
@@ -134,6 +157,7 @@ void uruchom_kasjerow() {
         }
     }
     printf("MAIN: Uruchomiono %d kasjerow\n", LICZBA_KAS);
+    rejestr_log("MAIN", "Uruchomiono %d kasjerow", LICZBA_KAS);
 }
 
 void uruchom_pracownikow() {
@@ -150,6 +174,7 @@ void uruchom_pracownikow() {
         }
     }
     printf("MAIN: Uruchomiono %d pracownikow\n", LICZBA_SEKTOROW);
+    rejestr_log("MAIN", "Uruchomiono %d pracownikow", LICZBA_SEKTOROW);
 }
 
 void wyswietl_pomoc(const char *nazwa_programu) {
@@ -184,9 +209,15 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (rejestr_init(NULL) == -1) {
+        fprintf(stderr, "Ostrzezenie: Nie udalo sie otworzyc pliku rejestru\n");
+    }
+
     printf("===========================================\n");
     printf("    SYMULATOR HALI WIDOWISKOWO-SPORTOWEJ\n");
     printf("===========================================\n\n");
+
+    rejestr_log("MAIN", "Start symulacji z pojemnoscia K=%d", pojemnosc_K);
 
     signal(SIGINT, obsluga_sygnalow);
     signal(SIGTERM, obsluga_sygnalow);
@@ -207,9 +238,12 @@ int main(int argc, char *argv[]) {
     printf("\nMAIN: System gotowy. Generowanie kibicow...\n");
     printf("(Nacisnij Ctrl+C aby zakonczyc)\n\n");
 
+    rejestr_log("MAIN", "System gotowy - rozpoczynam generowanie kibicow");
+
     while(1) {
         if (stan_hali->ewakuacja_trwa) {
             printf("MAIN: Ewakuacja w toku - wstrzymano generowanie kibicow.\n");
+            rejestr_log("MAIN", "Ewakuacja - wstrzymano generowanie kibicow");
             sleep(2);
             continue;
         }
