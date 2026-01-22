@@ -3,14 +3,31 @@
 int id_sektora = -1;
 int shm_id = -1;
 int sem_id = -1;
-int fifo_fd = -1;
 StanHali *stan_hali = NULL;
 volatile sig_atomic_t ewakuacja_zgloszono = 0;
+volatile sig_atomic_t praca_trwa = 1;
+
+pthread_t watki_stanowisk[2];
+pthread_mutex_t mutex_sektor = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond_sektor = PTHREAD_COND_INITIALIZER;
+
+typedef struct {
+    int id_stanowiska;
+    int id_sektora;
+} DaneWatku;
 
 void obsluga_wyjscia() {
-    if (fifo_fd != -1) {
-        close(fifo_fd);
+    praca_trwa = 0;
+    
+    pthread_cond_broadcast(&cond_sektor);
+    
+    for (int i = 0; i < 2; i++) {
+        pthread_join(watki_stanowisk[i], NULL);
     }
+    
+    pthread_mutex_destroy(&mutex_sektor);
+    pthread_cond_destroy(&cond_sektor);
+    
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->pidy_pracownikow[id_sektora] = 0;
         shmdt(stan_hali);
@@ -22,7 +39,7 @@ void handler_blokada(int sig) {
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 1;
         const char *msg = "[BLOKADA] SEKTOR ZABLOKOWANY\n";
-        if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
+        write(STDOUT_FILENO, msg, strlen(msg));
     }
 }
 
@@ -30,15 +47,17 @@ void handler_odblokowanie(int sig) {
     (void)sig;
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 0;
+        pthread_cond_broadcast(&cond_sektor);
         const char *msg = "[ODBLOKOWANIE] SEKTOR ODBLOKOWANY\n";
-        if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
+        write(STDOUT_FILENO, msg, strlen(msg));
     }
 }
 
 void handler_ewakuacja(int sig) {
     (void)sig;
     const char *msg = "[EWAKUACJA] Otwieram bramki awaryjne.\n";
-    if (write(STDOUT_FILENO, msg, strlen(msg)) == -1) {}
+    write(STDOUT_FILENO, msg, strlen(msg));
+    pthread_cond_broadcast(&cond_sektor);
 }
 
 void inicjalizuj() {
@@ -57,6 +76,10 @@ void inicjalizuj() {
     if (stan_hali == (void*)-1) {
         perror("shmat");
         exit(EXIT_FAILURE);
+    }
+    
+    if (rejestr_init(NULL) == -1) {
+        fprintf(stderr, "Pracownik %d: Nie udalo sie otworzyc rejestru\n", id_sektora);
     }
 }
 
@@ -97,6 +120,7 @@ void wyslij_zgloszenie_do_kierownika(int typ, const char *wiadomosc) {
     } else {
         printf("Pracownik %d: Wyslano zgloszenie do kierownika: %s\n",
                id_sektora, wiadomosc);
+        rejestr_log("PRACOWNIK", "Sektor %d: Wyslano zgloszenie - %s", id_sektora, wiadomosc);
     }
 
     close(fd);
@@ -128,6 +152,7 @@ void obsluguj_ewakuacje() {
         printf("%sPracownik %d: [OK] %s%s\n",
                KOLOR_ZIELONY, id_sektora, msg, KOLOR_RESET);
 
+        rejestr_log("PRACOWNIK", msg);
         wyslij_zgloszenie_do_kierownika(1, msg);
 
         ewakuacja_zgloszono = 1;
@@ -137,72 +162,126 @@ void obsluguj_ewakuacje() {
     }
 }
 
-void obsluguj_bramki() {
-    if (stan_hali->ewakuacja_trwa) {
-        obsluguj_ewakuacje();
-        return;
-    }
+void obsluz_stanowisko(int nr_stanowiska) {
+    Bramka *b = &stan_hali->bramki[id_sektora][nr_stanowiska];
 
-    if (stan_hali->sektor_zablokowany[id_sektora]) return;
-
-    struct sembuf operacje[1];
-    operacje[0].sem_num = 0;
-    operacje[0].sem_op = -1;
-    operacje[0].sem_flg = 0;
-    if (semop(sem_id, operacje, 1) == -1) return;
-
-    for (int nr_stanowiska = 0; nr_stanowiska < 2; nr_stanowiska++) {
-        Bramka *b = &stan_hali->bramki[id_sektora][nr_stanowiska];
-
-        int liczba_zajetych = 0;
-        for (int i = 0; i < 3; i++) {
-            if (b->miejsca[i].pid_kibica != 0) {
-                liczba_zajetych++;
-            }
-        }
-
-        if (liczba_zajetych == 0) {
-            b->obecna_druzyna = 0;
-        }
-
-        for (int i = 0; i < 3; i++) {
-            if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
-                if (b->miejsca[i].ma_przedmiot) {
-                    printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Posiada noz!%s\n",
-                           KOLOR_CZERWONY,
-                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
-                           KOLOR_RESET);
-                    b->miejsca[i].zgoda_na_wejscie = 2;
-                    continue;
-                }
-
-                if (b->miejsca[i].wiek < 15) {
-                    if ((rand() % 100) < 10) {
-                         printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Wiek %d < 15 bez opiekuna%s\n",
-                           KOLOR_ZOLTY,
-                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek,
-                           KOLOR_RESET);
-                         b->miejsca[i].zgoda_na_wejscie = 3;
-                         continue;
-                    }
-                }
-
-                if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
-                    b->obecna_druzyna = b->miejsca[i].druzyna;
-                    b->miejsca[i].zgoda_na_wejscie = 1;
-
-                    printf("%sPracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c, Wiek %d)%s\n",
-                           KOLOR_ZIELONY,
-                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
-                           (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B', b->miejsca[i].wiek,
-                           KOLOR_RESET);
-                }
-            }
+    int liczba_zajetych = 0;
+    for (int i = 0; i < 3; i++) {
+        if (b->miejsca[i].pid_kibica != 0) {
+            liczba_zajetych++;
         }
     }
 
-    operacje[0].sem_op = 1;
-    semop(sem_id, operacje, 1);
+    if (liczba_zajetych == 0) {
+        b->obecna_druzyna = 0;
+    }
+
+    for (int i = 0; i < 3; i++) {
+        if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
+            if (b->miejsca[i].ma_przedmiot) {
+                printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Posiada noz!%s\n",
+                       KOLOR_CZERWONY,
+                       id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
+                       KOLOR_RESET);
+                rejestr_log("KONTROLA", "Sektor %d Stan %d: Zatrzymano PID %d - noz",
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
+                b->miejsca[i].zgoda_na_wejscie = 2;
+                continue;
+            }
+
+            if (b->miejsca[i].wiek < 15) {
+                if ((rand() % 100) < 10) {
+                     printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Wiek %d < 15 bez opiekuna%s\n",
+                       KOLOR_ZOLTY,
+                       id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek,
+                       KOLOR_RESET);
+                     rejestr_log("KONTROLA", "Sektor %d Stan %d: Zatrzymano PID %d - wiek %d",
+                                id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek);
+                     b->miejsca[i].zgoda_na_wejscie = 3;
+                     continue;
+                }
+            }
+
+            if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
+                b->obecna_druzyna = b->miejsca[i].druzyna;
+                b->miejsca[i].zgoda_na_wejscie = 1;
+
+                printf("%sPracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c, Wiek %d)%s\n",
+                       KOLOR_ZIELONY,
+                       id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
+                       (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B', b->miejsca[i].wiek,
+                       KOLOR_RESET);
+                rejestr_log("KONTROLA", "Sektor %d Stan %d: Wpuszczono PID %d druzyna %c",
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
+                           (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B');
+            }
+        }
+    }
+}
+
+void* watek_stanowiska(void *arg) {
+    DaneWatku *dane = (DaneWatku*)arg;
+    int nr_stanowiska = dane->id_stanowiska;
+    
+    printf("Pracownik %d: Watek stanowiska %d uruchomiony\n", id_sektora, nr_stanowiska);
+    rejestr_log("PRACOWNIK", "Sektor %d: Watek stanowiska %d uruchomiony", id_sektora, nr_stanowiska);
+    
+    while (praca_trwa) {
+        pthread_mutex_lock(&mutex_sektor);
+        
+        while (stan_hali->sektor_zablokowany[id_sektora] && praca_trwa && !stan_hali->ewakuacja_trwa) {
+            pthread_cond_wait(&cond_sektor, &mutex_sektor);
+        }
+        
+        pthread_mutex_unlock(&mutex_sektor);
+        
+        if (!praca_trwa) break;
+        
+        if (stan_hali->ewakuacja_trwa) {
+            usleep(500000);
+            continue;
+        }
+        
+        struct sembuf operacje[1];
+        operacje[0].sem_num = 0;
+        operacje[0].sem_op = -1;
+        operacje[0].sem_flg = 0;
+        
+        if (semop(sem_id, operacje, 1) == -1) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        
+        obsluz_stanowisko(nr_stanowiska);
+        
+        operacje[0].sem_op = 1;
+        semop(sem_id, operacje, 1);
+        
+        usleep(200000);
+    }
+    
+    printf("Pracownik %d: Watek stanowiska %d zakonczony\n", id_sektora, nr_stanowiska);
+    rejestr_log("PRACOWNIK", "Sektor %d: Watek stanowiska %d zakonczony", id_sektora, nr_stanowiska);
+    
+    free(dane);
+    return NULL;
+}
+
+void uruchom_watki_stanowisk() {
+    for (int i = 0; i < 2; i++) {
+        DaneWatku *dane = malloc(sizeof(DaneWatku));
+        if (dane == NULL) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        dane->id_stanowiska = i;
+        dane->id_sektora = id_sektora;
+        
+        if (pthread_create(&watki_stanowisk[i], NULL, watek_stanowiska, dane) != 0) {
+            perror("pthread_create");
+            exit(EXIT_FAILURE);
+        }
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -228,12 +307,17 @@ int main(int argc, char *argv[]) {
 
     stan_hali->pidy_pracownikow[id_sektora] = getpid();
 
-    printf("Pracownik sektora %d gotowy (PID: %d). Obsluguje 2 stanowiska kontroli.\n",
+    printf("Pracownik sektora %d gotowy (PID: %d). Uruchamiam 2 watki stanowisk.\n",
            id_sektora, getpid());
+    rejestr_log("PRACOWNIK", "Sektor %d: Start PID %d", id_sektora, getpid());
 
-    while (1) {
-        obsluguj_bramki();
-        usleep(200000);
+    uruchom_watki_stanowisk();
+
+    while (praca_trwa) {
+        if (stan_hali->ewakuacja_trwa) {
+            obsluguj_ewakuacje();
+        }
+        sleep(1);
     }
 
     return 0;

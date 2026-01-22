@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -D_GNU_SOURCE
-LDFLAGS = 
+LDFLAGS = -lpthread
 
 TARGETS = main kierownik kasjer pracownik kibic
 OBJS = main.o kierownik.o kasjer.o pracownik.o kibic.o
@@ -22,8 +22,8 @@ pracownik: pracownik.o
 kibic: kibic.o
 	$(CC) $(CFLAGS) -o $@ kibic.o $(LDFLAGS)
 
-%.o: %.c common.h
-	$(CC) $(CFLAGS) -c $<
+%.o: %.c common.h rejestr.h
+	$(CC) $(CFLAGS) -c $
 
 clean:
 	rm -f $(TARGETS) *.o
