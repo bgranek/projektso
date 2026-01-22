@@ -16,6 +16,9 @@
 #include <time.h>
 #include <string.h>
 #include <fcntl.h>
+#include <pthread.h>
+
+#include "rejestr.h"
 
 #define KOLOR_RESET    "\033[0m"
 #define KOLOR_CZERWONY "\033[31m"
@@ -79,6 +82,7 @@ typedef struct {
     MiejscaKolejki miejsca[3];
     int obecna_druzyna;
     int liczba_oczekujacych;
+    pthread_mutex_t mutex;
 } Bramka;
 
 typedef struct {
