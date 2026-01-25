@@ -162,6 +162,22 @@ void obsluguj_ewakuacje() {
     }
 }
 
+int sprawdz_rodzine_dziecka(pid_t pid_dziecka) {
+    RejestrRodzin *rej = &stan_hali->rejestr_rodzin;
+
+    for (int i = 0; i < MAX_RODZIN; i++) {
+        if (rej->rodziny[i].aktywna &&
+            rej->rodziny[i].pid_dziecka == pid_dziecka &&
+            rej->rodziny[i].sektor == id_sektora) {
+
+            if (rej->rodziny[i].rodzic_przy_bramce && rej->rodziny[i].dziecko_przy_bramce) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 void obsluz_stanowisko(int nr_stanowiska) {
     Bramka *b = &stan_hali->bramki[id_sektora][nr_stanowiska];
 
@@ -190,16 +206,20 @@ void obsluz_stanowisko(int nr_stanowiska) {
             }
 
             if (b->miejsca[i].wiek < 15) {
-                if ((rand() % 100) < 10) {
-                     printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Wiek %d < 15 bez opiekuna%s\n",
-                       KOLOR_ZOLTY,
-                       id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek,
-                       KOLOR_RESET);
-                     rejestr_log("KONTROLA", "Sektor %d Stan %d: Zatrzymano PID %d - wiek %d",
-                                id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek);
-                     b->miejsca[i].zgoda_na_wejscie = 3;
-                     continue;
+                if (!sprawdz_rodzine_dziecka(b->miejsca[i].pid_kibica)) {
+                    printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Wiek %d < 15 bez opiekuna%s\n",
+                           KOLOR_ZOLTY,
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek,
+                           KOLOR_RESET);
+                    rejestr_log("KONTROLA", "Sektor %d Stan %d: Zatrzymano PID %d - wiek %d bez opiekuna",
+                               id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek);
+                    b->miejsca[i].zgoda_na_wejscie = 3;
+                    continue;
                 }
+                printf("%sPracownik %d (Stanowisko %d): Dziecko PID %d ma opiekuna - OK%s\n",
+                       KOLOR_CYAN, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, KOLOR_RESET);
+                rejestr_log("KONTROLA", "Sektor %d Stan %d: Dziecko PID %d z opiekunem",
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
             }
 
             if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
