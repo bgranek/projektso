@@ -48,8 +48,18 @@
 
 #define FIFO_PRACOWNIK_KIEROWNIK "/tmp/hala_fifo_ewakuacja"
 
+#define PIPE_KIEROWNIK_FD 3
+#define PIPE_CMD_SHUTDOWN 1
+#define PIPE_CMD_STATUS 2
+
 #define DRUZYNA_A 1
 #define DRUZYNA_B 2
+
+#define SZANSA_RODZINY 15
+#define WIEK_DZIECKA_MAX 14
+#define WIEK_DZIECKA_MIN 5
+#define WIEK_RODZICA_MIN 25
+#define WIEK_RODZICA_MAX 50
 
 #define SYGNAL_BLOKADA_SEKTORA SIGRTMIN+1
 #define SYGNAL_ODBLOKOWANIE_SEKTORA SIGRTMIN+2
@@ -128,6 +138,8 @@ typedef struct {
     int czas_trwania_meczu;
 
     Bramka bramki[LICZBA_SEKTOROW][2];
+
+    RejestrRodzin rejestr_rodzin;
 } StanHali;
 
 typedef struct {
@@ -145,6 +157,23 @@ typedef struct {
     int liczba_sprzedanych;
     int czy_sukces;
 } OdpowiedzBilet;
+
+#define MAX_RODZIN 50
+
+typedef struct {
+    pid_t pid_rodzica;
+    pid_t pid_dziecka;
+    int sektor;
+    int rodzic_przy_bramce;
+    int dziecko_przy_bramce;
+    int aktywna;
+} Rodzina;
+
+typedef struct {
+    Rodzina rodziny[MAX_RODZIN];
+    int liczba_rodzin;
+    pthread_mutex_t mutex;
+} RejestrRodzin;
 
 typedef struct {
     int typ;

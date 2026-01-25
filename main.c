@@ -3,6 +3,7 @@
 int shm_id = -1;
 int sem_id = -1;
 int msg_id = -1;
+int pipe_kierownik[2] = {-1, -1};
 StanHali *stan_hali = NULL;
 int pojemnosc_K = POJEMNOSC_DOMYSLNA;
 int czas_do_meczu = CZAS_DO_MECZU_DOMYSLNY;
@@ -12,8 +13,19 @@ void usun_fifo() {
     unlink(FIFO_PRACOWNIK_KIEROWNIK);
 }
 
+void wyslij_shutdown_pipe() {
+    if (pipe_kierownik[1] != -1) {
+        int cmd = PIPE_CMD_SHUTDOWN;
+        write(pipe_kierownik[1], &cmd, sizeof(cmd));
+        close(pipe_kierownik[1]);
+        pipe_kierownik[1] = -1;
+    }
+}
+
 void sprzataj_zasoby() {
     rejestr_log("MAIN", "Rozpoczynam sprzatanie zasobow");
+
+    wyslij_shutdown_pipe();
 
     if (stan_hali != NULL) {
         rejestr_statystyki(
@@ -145,8 +157,19 @@ void inicjalizuj_zasoby() {
 }
 
 void uruchom_kierownika() {
+    if (pipe(pipe_kierownik) == -1) {
+        perror("pipe kierownik");
+        exit(EXIT_FAILURE);
+    }
+
     pid_t pid = fork();
     if (pid == 0) {
+        close(pipe_kierownik[1]);
+        if (dup2(pipe_kierownik[0], PIPE_KIEROWNIK_FD) == -1) {
+            perror("dup2 kierownik");
+            exit(EXIT_FAILURE);
+        }
+        close(pipe_kierownik[0]);
         execl("./kierownik", "kierownik", NULL);
         perror("execl kierownik");
         exit(EXIT_FAILURE);
@@ -154,8 +177,10 @@ void uruchom_kierownika() {
         perror("fork kierownik");
         exit(EXIT_FAILURE);
     }
-    printf("MAIN: Uruchomiono kierownika (PID: %d)\n", pid);
-    rejestr_log("MAIN", "Uruchomiono kierownika PID: %d", pid);
+
+    close(pipe_kierownik[0]);
+    printf("MAIN: Uruchomiono kierownika (PID: %d) z pipe\n", pid);
+    rejestr_log("MAIN", "Uruchomiono kierownika PID: %d z pipe", pid);
 }
 
 void uruchom_kasjerow() {
