@@ -20,6 +20,44 @@ int jestem_rodzicem = 0;
 pid_t pid_partnera = 0;
 int id_rodziny = -1;
 
+volatile sig_atomic_t ewakuacja_mnie = 0;
+int jestem_w_hali = 0;
+
+void handler_ewakuacja(int sig) {
+    (void)sig;
+    ewakuacja_mnie = 1;
+}
+
+void ewakuuj_sie() {
+    if (!jestem_w_hali) return;
+
+    printf("%sKibic %d: [EWAKUACJA] Opuszczam hale natychmiast!%s\n",
+           KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+    rejestr_log("KIBIC", "PID %d ewakuacja z sektora %d", getpid(), numer_sektora);
+
+    struct sembuf op = {0, -1, 0};
+    if (semop(sem_id, &op, 1) == -1) return;
+
+    stan_hali->suma_kibicow_w_hali--;
+    if (numer_sektora >= 0 && numer_sektora < LICZBA_WSZYSTKICH_SEKTOROW) {
+        stan_hali->liczniki_sektorow[numer_sektora] -= liczba_biletow;
+        if (stan_hali->liczniki_sektorow[numer_sektora] < 0) {
+            stan_hali->liczniki_sektorow[numer_sektora] = 0;
+        }
+    }
+    if (jestem_vip && numer_sektora == SEKTOR_VIP) {
+        stan_hali->liczba_vip--;
+    }
+
+    op.sem_op = 1;
+    semop(sem_id, &op, 1);
+
+    jestem_w_hali = 0;
+    printf("%sKibic %d: Ewakuowalem sie z hali.%s\n",
+           KOLOR_ZIELONY, getpid(), KOLOR_RESET);
+    rejestr_log("KIBIC", "PID %d ewakuacja zakonczona", getpid());
+}
+
 void obsluga_wyjscia() {
     if (stan_hali != NULL) {
         if (jestem_rodzicem && id_rodziny >= 0) {
@@ -111,6 +149,12 @@ void inicjalizuj() {
         perror("shmat kibic");
         exit(EXIT_FAILURE);
     }
+
+    struct sigaction sa;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sa.sa_handler = handler_ewakuacja;
+    sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
 
     rejestr_init(NULL);
 }
@@ -278,12 +322,20 @@ void idz_do_bramki() {
         op.sem_op = 1;
         semop(sem_id, &op, 1);
 
+        jestem_w_hali = 1;
         printf("%sKibic %d: Wszedlem na sektor VIP! Ogladam mecz...%s\n",
                KOLOR_ZIELONY, getpid(), KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d wszedl na sektor VIP", getpid());
 
         int czas_ogladania = 3 + (rand() % 5);
-        sleep(czas_ogladania);
+        for (int t = 0; t < czas_ogladania && !ewakuacja_mnie; t++) {
+            sleep(1);
+        }
+
+        if (ewakuacja_mnie) {
+            ewakuuj_sie();
+            return;
+        }
 
         op.sem_op = -1;
         semop(sem_id, &op, 1);
@@ -293,6 +345,7 @@ void idz_do_bramki() {
         op.sem_op = 1;
         semop(sem_id, &op, 1);
 
+        jestem_w_hali = 0;
         printf("Kibic %d: Wychodze z hali.\n", getpid());
         rejestr_log("KIBIC", "PID %d wyszedl z hali", getpid());
         return;
@@ -437,12 +490,20 @@ void idz_do_bramki() {
     op.sem_op = 1;
     semop(sem_id, &op, 1);
 
+    jestem_w_hali = 1;
     printf("%sKibic %d: Wszedlem na sektor %d! Ogladam mecz...%s\n",
            KOLOR_ZIELONY, getpid(), numer_sektora, KOLOR_RESET);
     rejestr_log("KIBIC", "PID %d wszedl na sektor %d", getpid(), numer_sektora);
 
     int czas_ogladania = 3 + (rand() % 5);
-    sleep(czas_ogladania);
+    for (int t = 0; t < czas_ogladania && !ewakuacja_mnie; t++) {
+        sleep(1);
+    }
+
+    if (ewakuacja_mnie) {
+        ewakuuj_sie();
+        return;
+    }
 
     op.sem_op = -1;
     semop(sem_id, &op, 1);
@@ -451,6 +512,7 @@ void idz_do_bramki() {
     op.sem_op = 1;
     semop(sem_id, &op, 1);
 
+    jestem_w_hali = 0;
     printf("Kibic %d: Wychodze z hali.\n", getpid());
     rejestr_log("KIBIC", "PID %d wyszedl z hali", getpid());
 }
