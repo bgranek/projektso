@@ -1,0 +1,8 @@
+{
+  "name": "C Dev Container",
+  "image": "mcr.microsoft.com/vscode/devcontainers/cpp:ubuntu-22.04",
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/workspace,type=bind"
+  ]
+}
