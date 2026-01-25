@@ -1,5 +1,6 @@
 #include "common.h"
 #include <time.h>
+#include <sys/wait.h>
 
 int shm_id = -1;
 int msg_id = -1;
@@ -14,10 +15,78 @@ int mam_noz = 0;
 int moj_wiek = 20;
 int liczba_biletow = 1;
 
+int jestem_dzieckiem = 0;
+int jestem_rodzicem = 0;
+pid_t pid_partnera = 0;
+int id_rodziny = -1;
+
 void obsluga_wyjscia() {
     if (stan_hali != NULL) {
+        if (jestem_rodzicem && id_rodziny >= 0) {
+            stan_hali->rejestr_rodzin.rodziny[id_rodziny].aktywna = 0;
+        }
         shmdt(stan_hali);
     }
+}
+
+int zarejestruj_rodzine(pid_t pid_rodzica, pid_t pid_dziecka) {
+    struct sembuf op = {0, -1, 0};
+    if (semop(sem_id, &op, 1) == -1) return -1;
+
+    int idx = -1;
+    RejestrRodzin *rej = &stan_hali->rejestr_rodzin;
+
+    for (int i = 0; i < MAX_RODZIN; i++) {
+        if (!rej->rodziny[i].aktywna) {
+            idx = i;
+            break;
+        }
+    }
+
+    if (idx >= 0) {
+        rej->rodziny[idx].pid_rodzica = pid_rodzica;
+        rej->rodziny[idx].pid_dziecka = pid_dziecka;
+        rej->rodziny[idx].sektor = -1;
+        rej->rodziny[idx].rodzic_przy_bramce = 0;
+        rej->rodziny[idx].dziecko_przy_bramce = 0;
+        rej->rodziny[idx].aktywna = 1;
+        if (rej->liczba_rodzin < MAX_RODZIN) rej->liczba_rodzin++;
+    }
+
+    op.sem_op = 1;
+    semop(sem_id, &op, 1);
+    return idx;
+}
+
+void ustaw_przy_bramce(int flaga) {
+    if (id_rodziny < 0) return;
+
+    struct sembuf op = {0, -1, 0};
+    if (semop(sem_id, &op, 1) == -1) return;
+
+    Rodzina *r = &stan_hali->rejestr_rodzin.rodziny[id_rodziny];
+    if (jestem_rodzicem) {
+        r->rodzic_przy_bramce = flaga;
+    } else {
+        r->dziecko_przy_bramce = flaga;
+    }
+
+    op.sem_op = 1;
+    semop(sem_id, &op, 1);
+}
+
+int czekaj_na_partnera() {
+    if (id_rodziny < 0) return 1;
+
+    for (int i = 0; i < 100; i++) {
+        Rodzina *r = &stan_hali->rejestr_rodzin.rodziny[id_rodziny];
+        if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
+            return 1;
+        }
+        if (stan_hali->ewakuacja_trwa) return 0;
+        usleep(100000);
+    }
+    return 0;
 }
 
 void inicjalizuj() {
@@ -173,6 +242,23 @@ void sprobuj_kupic_bilet() {
 void idz_do_bramki() {
     if (!ma_bilet) return;
     sleep(1);
+
+    if (jestem_dzieckiem || jestem_rodzicem) {
+        ustaw_przy_bramce(1);
+        printf("Kibic %d (%s): Czekam na %s przy bramce...\n",
+               getpid(),
+               jestem_rodzicem ? "RODZIC" : "DZIECKO",
+               jestem_rodzicem ? "dziecko" : "rodzica");
+
+        if (!czekaj_na_partnera()) {
+            printf("%sKibic %d: Partner nie dotarl - rezygnuje.%s\n",
+                   KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+            return;
+        }
+        printf("%sKibic %d: Rodzina kompletna - wchodzimy razem!%s\n",
+               KOLOR_CYAN, getpid(), KOLOR_RESET);
+        rejestr_log("KIBIC", "PID %d rodzina kompletna przy bramce", getpid());
+    }
 
     if (numer_sektora == SEKTOR_VIP) {
         printf("%sKibic %d (VIP): Wchodze osobnym wejsciem VIP bez kontroli.%s\n",
@@ -370,9 +456,6 @@ void idz_do_bramki() {
 }
 
 int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
-
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand((unsigned int)(ts.tv_nsec ^ getpid()));
@@ -381,21 +464,84 @@ int main(int argc, char *argv[]) {
     inicjalizuj();
     if (stan_hali->ewakuacja_trwa) return 0;
 
+    if (argc >= 3 && strcmp(argv[1], "--dziecko") == 0) {
+        jestem_dzieckiem = 1;
+        pid_partnera = (pid_t)atoi(argv[2]);
+        id_rodziny = (argc >= 4) ? atoi(argv[3]) : -1;
+        moj_wiek = WIEK_DZIECKA_MIN + (rand() % (WIEK_DZIECKA_MAX - WIEK_DZIECKA_MIN + 1));
+        moja_druzyna = (argc >= 5) ? atoi(argv[4]) : DRUZYNA_A;
+        numer_sektora = (argc >= 6) ? atoi(argv[5]) : -1;
+        ma_bilet = (numer_sektora >= 0) ? 1 : 0;
+
+        printf("%sKibic %d (DZIECKO): Start z rodzicem %d | Wiek: %d | Sektor: %d%s\n",
+               KOLOR_CYAN, getpid(), pid_partnera, moj_wiek, numer_sektora, KOLOR_RESET);
+        rejestr_log("KIBIC", "PID %d dziecko rodzica %d, wiek %d, sektor %d",
+                   getpid(), pid_partnera, moj_wiek, numer_sektora);
+
+        if (ma_bilet) {
+            idz_do_bramki();
+        }
+        return 0;
+    }
+
     moja_druzyna = (rand() % 2) ? DRUZYNA_A : DRUZYNA_B;
     jestem_vip = sprawdz_vip();
     mam_noz = ((rand() % 100) < SZANSA_NA_PRZEDMIOT);
-    moj_wiek = (rand() % 60) + 5;
-    liczba_biletow = (rand() % MAX_BILETOW_NA_KIBICA) + 1;
 
-    printf("Kibic %d: Start | Druzyna: %c | Wiek: %d | VIP: %s | Noz: %s | Bilety: %d\n",
-           getpid(),
-           (moja_druzyna == DRUZYNA_A) ? 'A' : 'B',
-           moj_wiek,
-           jestem_vip ? "TAK" : "NIE",
-           mam_noz ? "TAK" : "NIE",
-           liczba_biletow);
+    int tworze_rodzine = (!jestem_vip && (rand() % 100) < SZANSA_RODZINY);
 
-    rejestr_log("KIBIC", "PID %d start: Druzyna %c, Wiek %d, VIP %s, Noz %s, Bilety %d",
+    if (tworze_rodzine) {
+        jestem_rodzicem = 1;
+        moj_wiek = WIEK_RODZICA_MIN + (rand() % (WIEK_RODZICA_MAX - WIEK_RODZICA_MIN + 1));
+        liczba_biletow = 2;
+
+        printf("%sKibic %d (RODZIC): Jestem z dzieckiem | Druzyna: %c | Wiek: %d%s\n",
+               KOLOR_CYAN, getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B',
+               moj_wiek, KOLOR_RESET);
+        rejestr_log("KIBIC", "PID %d rodzic, druzyna %c, wiek %d",
+                   getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B', moj_wiek);
+
+        sprobuj_kupic_bilet();
+
+        if (ma_bilet) {
+            id_rodziny = zarejestruj_rodzine(getpid(), 0);
+
+            pid_t pid_dziecka = fork();
+            if (pid_dziecka == 0) {
+                char arg_rodzic[16], arg_rodzina[16], arg_druzyna[16], arg_sektor[16];
+                snprintf(arg_rodzic, sizeof(arg_rodzic), "%d", getppid());
+                snprintf(arg_rodzina, sizeof(arg_rodzina), "%d", id_rodziny);
+                snprintf(arg_druzyna, sizeof(arg_druzyna), "%d", moja_druzyna);
+                snprintf(arg_sektor, sizeof(arg_sektor), "%d", numer_sektora);
+                execl("./kibic", "kibic", "--dziecko", arg_rodzic, arg_rodzina,
+                      arg_druzyna, arg_sektor, NULL);
+                perror("execl kibic dziecko");
+                exit(EXIT_FAILURE);
+            } else if (pid_dziecka > 0) {
+                pid_partnera = pid_dziecka;
+
+                struct sembuf op = {0, -1, 0};
+                semop(sem_id, &op, 1);
+                if (id_rodziny >= 0) {
+                    stan_hali->rejestr_rodzin.rodziny[id_rodziny].pid_dziecka = pid_dziecka;
+                    stan_hali->rejestr_rodzin.rodziny[id_rodziny].sektor = numer_sektora;
+                }
+                op.sem_op = 1;
+                semop(sem_id, &op, 1);
+
+                printf("%sKibic %d (RODZIC): Utworzono dziecko PID %d%s\n",
+                       KOLOR_CYAN, getpid(), pid_dziecka, KOLOR_RESET);
+                rejestr_log("KIBIC", "PID %d rodzic utworzyl dziecko %d", getpid(), pid_dziecka);
+
+                idz_do_bramki();
+                waitpid(pid_dziecka, NULL, 0);
+            }
+        }
+    } else {
+        moj_wiek = (rand() % 60) + 5;
+        liczba_biletow = (rand() % MAX_BILETOW_NA_KIBICA) + 1;
+
+        printf("Kibic %d: Start | Druzyna: %c | Wiek: %d | VIP: %s | Noz: %s | Bilety: %d\n",
                getpid(),
                (moja_druzyna == DRUZYNA_A) ? 'A' : 'B',
                moj_wiek,
@@ -403,9 +549,18 @@ int main(int argc, char *argv[]) {
                mam_noz ? "TAK" : "NIE",
                liczba_biletow);
 
-    sprobuj_kupic_bilet();
-    if (ma_bilet) {
-        idz_do_bramki();
+        rejestr_log("KIBIC", "PID %d start: Druzyna %c, Wiek %d, VIP %s, Noz %s, Bilety %d",
+                   getpid(),
+                   (moja_druzyna == DRUZYNA_A) ? 'A' : 'B',
+                   moj_wiek,
+                   jestem_vip ? "TAK" : "NIE",
+                   mam_noz ? "TAK" : "NIE",
+                   liczba_biletow);
+
+        sprobuj_kupic_bilet();
+        if (ma_bilet) {
+            idz_do_bramki();
+        }
     }
 
     return 0;

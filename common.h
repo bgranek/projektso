@@ -110,6 +110,23 @@ typedef struct {
     pthread_mutex_t mutex;
 } Bramka;
 
+#define MAX_RODZIN 50
+
+typedef struct {
+    pid_t pid_rodzica;
+    pid_t pid_dziecka;
+    int sektor;
+    int rodzic_przy_bramce;
+    int dziecko_przy_bramce;
+    int aktywna;
+} Rodzina;
+
+typedef struct {
+    Rodzina rodziny[MAX_RODZIN];
+    int liczba_rodzin;
+    pthread_mutex_t mutex;
+} RejestrRodzin;
+
 typedef struct {
     int pojemnosc_calkowita;
     int pojemnosc_sektora;
@@ -157,23 +174,6 @@ typedef struct {
     int liczba_sprzedanych;
     int czy_sukces;
 } OdpowiedzBilet;
-
-#define MAX_RODZIN 50
-
-typedef struct {
-    pid_t pid_rodzica;
-    pid_t pid_dziecka;
-    int sektor;
-    int rodzic_przy_bramce;
-    int dziecko_przy_bramce;
-    int aktywna;
-} Rodzina;
-
-typedef struct {
-    Rodzina rodziny[MAX_RODZIN];
-    int liczba_rodzin;
-    pthread_mutex_t mutex;
-} RejestrRodzin;
 
 typedef struct {
     int typ;
