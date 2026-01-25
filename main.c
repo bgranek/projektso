@@ -5,6 +5,8 @@ int sem_id = -1;
 int msg_id = -1;
 StanHali *stan_hali = NULL;
 int pojemnosc_K = POJEMNOSC_DOMYSLNA;
+int czas_do_meczu = CZAS_DO_MECZU_DOMYSLNY;
+int czas_trwania_meczu = CZAS_TRWANIA_MECZU_DOMYSLNY;
 
 void usun_fifo() {
     unlink(FIFO_PRACOWNIK_KIEROWNIK);
@@ -98,16 +100,25 @@ void inicjalizuj_zasoby() {
     stan_hali->liczba_vip = 0;
     stan_hali->wszystkie_bilety_sprzedane = 0;
 
+    stan_hali->faza_meczu = FAZA_PRZED_MECZEM;
+    stan_hali->czas_startu_symulacji = time(NULL);
+    stan_hali->czas_do_meczu = czas_do_meczu;
+    stan_hali->czas_trwania_meczu = czas_trwania_meczu;
+
     printf("MAIN: Parametry hali:\n");
     printf("  - Pojemnosc calkowita (K): %d\n", stan_hali->pojemnosc_calkowita);
     printf("  - Pojemnosc sektora (K/8): %d\n", stan_hali->pojemnosc_sektora);
     printf("  - Pojemnosc VIP: %d\n", stan_hali->pojemnosc_vip);
     printf("  - Limit VIP (<0.3%% * K): %d\n", stan_hali->limit_vip);
+    printf("  - Czas do meczu: %d sekund\n", stan_hali->czas_do_meczu);
+    printf("  - Czas trwania meczu: %d sekund\n", stan_hali->czas_trwania_meczu);
 
     rejestr_log("MAIN", "Pojemnosc calkowita: %d", stan_hali->pojemnosc_calkowita);
     rejestr_log("MAIN", "Pojemnosc sektora: %d", stan_hali->pojemnosc_sektora);
     rejestr_log("MAIN", "Pojemnosc VIP: %d", stan_hali->pojemnosc_vip);
     rejestr_log("MAIN", "Limit VIP: %d", stan_hali->limit_vip);
+    rejestr_log("MAIN", "Czas do meczu: %d s, czas trwania: %d s",
+                stan_hali->czas_do_meczu, stan_hali->czas_trwania_meczu);
 
     for (int i = 0; i < LICZBA_KAS; i++) {
         stan_hali->kasa_aktywna[i] = (i < 2) ? 1 : 0;
@@ -187,15 +198,19 @@ void wyswietl_pomoc(const char *nazwa_programu) {
     printf("  -k <liczba>   Pojemnosc hali K (domyslnie: %d)\n", POJEMNOSC_DOMYSLNA);
     printf("                Zakres: %d - %d\n", POJEMNOSC_MIN, POJEMNOSC_MAX);
     printf("                Musi byc podzielne przez 8\n");
+    printf("  -t <sekundy>  Czas do rozpoczecia meczu (domyslnie: %d)\n", CZAS_DO_MECZU_DOMYSLNY);
+    printf("  -d <sekundy>  Czas trwania meczu (domyslnie: %d)\n", CZAS_TRWANIA_MECZU_DOMYSLNY);
+    printf("                Zakres czasow: %d - %d sekund\n", CZAS_MIN, CZAS_MAX);
     printf("  -h            Wyswietl te pomoc\n");
     printf("\nPrzyklady:\n");
-    printf("  %s              # Uruchom z domyslna pojemnoscia %d\n", nazwa_programu, POJEMNOSC_DOMYSLNA);
-    printf("  %s -k 800       # Uruchom z pojemnoscia 800\n", nazwa_programu);
+    printf("  %s                    # Uruchom z domyslnymi parametrami\n", nazwa_programu);
+    printf("  %s -k 800             # Pojemnosc 800\n", nazwa_programu);
+    printf("  %s -k 800 -t 60 -d 120  # Mecz za 60s, trwa 120s\n", nazwa_programu);
 }
 
 int main(int argc, char *argv[]) {
     int opt;
-    while ((opt = getopt(argc, argv, "k:h")) != -1) {
+    while ((opt = getopt(argc, argv, "k:t:d:h")) != -1) {
         switch (opt) {
             case 'k':
                 pojemnosc_K = parsuj_int(optarg, "pojemnosc K", POJEMNOSC_MIN, POJEMNOSC_MAX);
@@ -203,6 +218,12 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Blad: Pojemnosc K musi byc podzielna przez 8 (podano: %d)\n", pojemnosc_K);
                     exit(EXIT_FAILURE);
                 }
+                break;
+            case 't':
+                czas_do_meczu = parsuj_int(optarg, "czas do meczu", CZAS_MIN, CZAS_MAX);
+                break;
+            case 'd':
+                czas_trwania_meczu = parsuj_int(optarg, "czas trwania meczu", CZAS_MIN, CZAS_MAX);
                 break;
             case 'h':
                 wyswietl_pomoc(argv[0]);
@@ -244,11 +265,54 @@ int main(int argc, char *argv[]) {
 
     rejestr_log("MAIN", "System gotowy - rozpoczynam generowanie kibicow");
 
+    time_t czas_rozpoczecia_meczu = 0;
+
     while(1) {
+        time_t teraz = time(NULL);
+        time_t uplynelo = teraz - stan_hali->czas_startu_symulacji;
+
+        if (stan_hali->faza_meczu == FAZA_PRZED_MECZEM) {
+            if (uplynelo >= stan_hali->czas_do_meczu) {
+                stan_hali->faza_meczu = FAZA_MECZ;
+                czas_rozpoczecia_meczu = teraz;
+                printf("\n%s", KOLOR_BOLD);
+                printf("+===============================================+\n");
+                printf("|          MECZ ROZPOCZETY!                     |\n");
+                printf("+===============================================+\n");
+                printf("%s\n", KOLOR_RESET);
+                rejestr_log("MAIN", "MECZ ROZPOCZETY - kibicow w hali: %d",
+                           stan_hali->suma_kibicow_w_hali);
+            }
+        } else if (stan_hali->faza_meczu == FAZA_MECZ) {
+            time_t czas_meczu = teraz - czas_rozpoczecia_meczu;
+            if (czas_meczu >= stan_hali->czas_trwania_meczu) {
+                stan_hali->faza_meczu = FAZA_PO_MECZU;
+                printf("\n%s", KOLOR_BOLD);
+                printf("+===============================================+\n");
+                printf("|          MECZ ZAKONCZONY!                     |\n");
+                printf("+===============================================+\n");
+                printf("%s\n", KOLOR_RESET);
+                rejestr_log("MAIN", "MECZ ZAKONCZONY");
+
+                printf("MAIN: Koniec meczu - zamykam symulacje.\n");
+                rejestr_log("MAIN", "Koniec symulacji po zakonczeniu meczu");
+                kill(0, SIGTERM);
+                while (wait(NULL) > 0);
+                sprzataj_zasoby();
+                printf("MAIN: Symulacja zakonczona pomyslnie.\n");
+                exit(0);
+            }
+        }
+
         if (stan_hali->ewakuacja_trwa) {
             printf("MAIN: Ewakuacja w toku - wstrzymano generowanie kibicow.\n");
             rejestr_log("MAIN", "Ewakuacja - wstrzymano generowanie kibicow");
             sleep(2);
+            continue;
+        }
+
+        if (stan_hali->faza_meczu == FAZA_MECZ) {
+            sleep(1);
             continue;
         }
 

@@ -23,7 +23,7 @@ kibic: kibic.o
 	$(CC) $(CFLAGS) -o $@ kibic.o $(LDFLAGS)
 
 %.o: %.c common.h rejestr.h
-	$(CC) $(CFLAGS) -c $
+	$(CC) $(CFLAGS) -c $<
 
 clean:
 	rm -f $(TARGETS) *.o

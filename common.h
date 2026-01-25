@@ -57,6 +57,17 @@
 
 #define TYP_KOMUNIKATU_ZAPYTANIE 1
 
+#define CZAS_DO_MECZU_DOMYSLNY 30
+#define CZAS_TRWANIA_MECZU_DOMYSLNY 60
+#define CZAS_MIN 10
+#define CZAS_MAX 3600
+
+typedef enum {
+    FAZA_PRZED_MECZEM = 0,
+    FAZA_MECZ = 1,
+    FAZA_PO_MECZU = 2
+} FazaMeczu;
+
 #define SPRAWDZ(x) \
     do { \
         if ((x) == -1) { \
@@ -110,6 +121,11 @@ typedef struct {
     int suma_kibicow_w_hali;
     int liczba_vip;
     int ewakuacja_trwa;
+
+    FazaMeczu faza_meczu;
+    time_t czas_startu_symulacji;
+    int czas_do_meczu;
+    int czas_trwania_meczu;
 
     Bramka bramki[LICZBA_SEKTOROW][2];
 } StanHali;
