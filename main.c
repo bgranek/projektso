@@ -343,6 +343,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, obsluga_sygnalow);
     signal(SIGTERM, obsluga_sygnalow);
     signal(SIGCHLD, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
 
     srand(time(NULL));
     inicjalizuj_zasoby();
@@ -432,7 +433,7 @@ int main(int argc, char *argv[]) {
         } else if (pid < 0) {
             perror("fork kibic");
         }
-        usleep((rand() % 400000) + 100000);
+        usleep((rand() % 100000) + 25000);
     }
 
     return 0;
