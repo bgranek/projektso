@@ -401,7 +401,7 @@ void idz_do_bramki() {
         } else {
             przepuszczeni++;
 
-            if (przepuszczeni > MAX_PRZEPUSZCZEN) {
+            if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
                 printf("%sKibic %d: FRUSTRACJA! Przepuscilem juz %d osob! Wpycham sie!%s\n",
                        KOLOR_CZERWONY, getpid(), przepuszczeni, KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d frustracja po %d przepuszczeniach", getpid(), przepuszczeni);
