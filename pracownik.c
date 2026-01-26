@@ -216,15 +216,18 @@ void obsluz_stanowisko(int nr_stanowiska) {
                     b->miejsca[i].zgoda_na_wejscie = 3;
                     continue;
                 }
-                printf("%sPracownik %d (Stanowisko %d): Dziecko PID %d ma opiekuna - OK%s\n",
-                       KOLOR_CYAN, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, KOLOR_RESET);
-                rejestr_log("KONTROLA", "Sektor %d Stan %d: Dziecko PID %d z opiekunem",
-                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
             }
 
             if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
                 b->obecna_druzyna = b->miejsca[i].druzyna;
                 b->miejsca[i].zgoda_na_wejscie = 1;
+
+                if (b->miejsca[i].wiek < 15) {
+                    printf("%sPracownik %d (Stanowisko %d): Dziecko PID %d ma opiekuna - OK%s\n",
+                           KOLOR_CYAN, id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, KOLOR_RESET);
+                    rejestr_log("KONTROLA", "Sektor %d Stan %d: Dziecko PID %d z opiekunem",
+                               id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
+                }
 
                 printf("%sPracownik %d (Stanowisko %d): Wpuszczam PID %d (Druzyna %c, Wiek %d)%s\n",
                        KOLOR_ZIELONY,
