@@ -21,8 +21,13 @@ static inline int rejestr_init(const char *nazwa_pliku) {
     if (nazwa_pliku == NULL) {
         nazwa_pliku = REJESTR_PLIK;
     }
-    
-    rejestr_fd = open(nazwa_pliku, O_WRONLY | O_CREAT | O_APPEND, 0644);
+
+    int tmp_fd = creat(nazwa_pliku, 0644);
+    if (tmp_fd != -1) {
+        close(tmp_fd);
+    }
+
+    rejestr_fd = open(nazwa_pliku, O_WRONLY | O_APPEND);
     if (rejestr_fd == -1) {
         perror("open rejestr");
         return -1;

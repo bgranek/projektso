@@ -1,4 +1,7 @@
 #include "common.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 int shm_id = -1;
 int sem_id = -1;
@@ -156,6 +159,74 @@ void inicjalizuj_zasoby() {
     rejestr_log("MAIN", "Zasoby IPC zainicjalizowane");
 }
 
+void* watek_serwera_socket(void *arg) {
+    (void)arg;
+
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd == -1) {
+        perror("socket");
+        return NULL;
+    }
+
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(SOCKET_MONITOR_PORT);
+
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        perror("bind");
+        close(server_fd);
+        return NULL;
+    }
+
+    if (listen(server_fd, 5) == -1) {
+        perror("listen");
+        close(server_fd);
+        return NULL;
+    }
+
+    printf("MAIN: Serwer socket monitoringu aktywny na porcie %d\n", SOCKET_MONITOR_PORT);
+    rejestr_log("MAIN", "Serwer socket uruchomiony na porcie %d", SOCKET_MONITOR_PORT);
+
+    while (1) {
+        int client_fd = accept(server_fd, NULL, NULL);
+        if (client_fd == -1) {
+            if (errno == EINTR) continue;
+            break;
+        }
+
+        char bufor[512];
+        int len = snprintf(bufor, sizeof(bufor),
+            "HALA|KIBICOW:%d|VIP:%d/%d|POJEMNOSC:%d|BILETY:%s|EWAKUACJA:%s|FAZA:%d",
+            stan_hali->suma_kibicow_w_hali,
+            stan_hali->liczba_vip,
+            stan_hali->limit_vip,
+            stan_hali->pojemnosc_calkowita,
+            stan_hali->wszystkie_bilety_sprzedane ? "WYPRZEDANE" : "DOSTEPNE",
+            stan_hali->ewakuacja_trwa ? "TAK" : "NIE",
+            stan_hali->faza_meczu);
+
+        for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+            len += snprintf(bufor + len, sizeof(bufor) - len,
+                "|S%d:%d/%d%s",
+                i,
+                stan_hali->liczniki_sektorow[i],
+                stan_hali->pojemnosc_sektora,
+                stan_hali->sektor_zablokowany[i] ? "[B]" : "");
+        }
+
+        send(client_fd, bufor, strlen(bufor), 0);
+        close(client_fd);
+    }
+
+    close(server_fd);
+    return NULL;
+}
+
 void uruchom_kierownika() {
     if (pipe(pipe_kierownik) == -1) {
         perror("pipe kierownik");
@@ -275,6 +346,13 @@ int main(int argc, char *argv[]) {
 
     srand(time(NULL));
     inicjalizuj_zasoby();
+
+    pthread_t watek_socket;
+    if (pthread_create(&watek_socket, NULL, watek_serwera_socket, NULL) != 0) {
+        perror("pthread_create socket");
+    } else {
+        pthread_detach(watek_socket);
+    }
 
     printf("\nMAIN: Uruchamianie systemu...\n");
 

@@ -52,6 +52,8 @@
 #define PIPE_CMD_SHUTDOWN 1
 #define PIPE_CMD_STATUS 2
 
+#define SOCKET_MONITOR_PORT 9999
+
 #define DRUZYNA_A 1
 #define DRUZYNA_B 2
 
