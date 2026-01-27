@@ -78,7 +78,7 @@ void inicjalizuj() {
         exit(EXIT_FAILURE);
     }
     
-    if (rejestr_init(NULL) == -1) {
+    if (rejestr_init(NULL, 0) == -1) {
         fprintf(stderr, "Pracownik %d: Nie udalo sie otworzyc rejestru\n", id_sektora);
     }
 }

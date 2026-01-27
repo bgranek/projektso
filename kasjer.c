@@ -38,7 +38,7 @@ void inicjalizuj() {
         exit(EXIT_FAILURE);
     }
 
-    rejestr_init(NULL);
+    rejestr_init(NULL, 0);
 }
 
 int sprawdz_czy_wyprzedane() {
@@ -241,7 +241,8 @@ int main(int argc, char *argv[]) {
                 printf("Kasjer %d: Wszystkie bilety sprzedane - zamykam kase.\n", id_kasjera);
                 rejestr_log("KASJER", "Kasa %d: Zamknieta - wyprzedane", id_kasjera);
             }
-            sleep(1);
+            obsluz_klienta();
+            usleep(100000);
             continue;
         }
 

@@ -156,7 +156,7 @@ void inicjalizuj() {
     sa.sa_handler = handler_ewakuacja;
     sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
 
-    rejestr_init(NULL);
+    rejestr_init(NULL, 0);
 }
 
 int sprawdz_vip() {
@@ -327,8 +327,7 @@ void idz_do_bramki() {
                KOLOR_ZIELONY, getpid(), KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d wszedl na sektor VIP", getpid());
 
-        int czas_ogladania = 3 + (rand() % 5);
-        for (int t = 0; t < czas_ogladania && !ewakuacja_mnie; t++) {
+        while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie) {
             sleep(1);
         }
 
@@ -495,8 +494,7 @@ void idz_do_bramki() {
            KOLOR_ZIELONY, getpid(), numer_sektora, KOLOR_RESET);
     rejestr_log("KIBIC", "PID %d wszedl na sektor %d", getpid(), numer_sektora);
 
-    int czas_ogladania = 3 + (rand() % 5);
-    for (int t = 0; t < czas_ogladania && !ewakuacja_mnie; t++) {
+    while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie) {
         sleep(1);
     }
 

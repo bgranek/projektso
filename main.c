@@ -201,11 +201,8 @@ void* watek_serwera_socket(void *arg) {
 
         char bufor[512];
         int len = snprintf(bufor, sizeof(bufor),
-            "HALA|KIBICOW:%d|VIP:%d/%d|POJEMNOSC:%d|BILETY:%s|EWAKUACJA:%s|FAZA:%d",
+            "HALA|OSOB_W_HALI:%d|BILETY:%s|EWAKUACJA:%s|FAZA:%d",
             stan_hali->suma_kibicow_w_hali,
-            stan_hali->liczba_vip,
-            stan_hali->limit_vip,
-            stan_hali->pojemnosc_calkowita,
             stan_hali->wszystkie_bilety_sprzedane ? "WYPRZEDANE" : "DOSTEPNE",
             stan_hali->ewakuacja_trwa ? "TAK" : "NIE",
             stan_hali->faza_meczu);
@@ -218,6 +215,12 @@ void* watek_serwera_socket(void *arg) {
                 stan_hali->pojemnosc_sektora,
                 stan_hali->sektor_zablokowany[i] ? "[B]" : "");
         }
+
+        len += snprintf(bufor + len, sizeof(bufor) - len,
+            "|VIP:%d/%d(osob:%d)",
+            stan_hali->liczniki_sektorow[SEKTOR_VIP],
+            stan_hali->pojemnosc_vip,
+            stan_hali->liczba_vip);
 
         send(client_fd, bufor, strlen(bufor), 0);
         close(client_fd);
@@ -330,7 +333,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (rejestr_init(NULL) == -1) {
+    if (rejestr_init(NULL, 1) == -1) {
         fprintf(stderr, "Ostrzezenie: Nie udalo sie otworzyc pliku rejestru\n");
     }
 
@@ -400,6 +403,7 @@ int main(int argc, char *argv[]) {
 
                 printf("MAIN: Koniec meczu - zamykam symulacje.\n");
                 rejestr_log("MAIN", "Koniec symulacji po zakonczeniu meczu");
+                signal(SIGTERM, SIG_IGN);
                 kill(0, SIGTERM);
                 while (wait(NULL) > 0);
                 sprzataj_zasoby();

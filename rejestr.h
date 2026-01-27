@@ -17,35 +17,39 @@
 static int rejestr_fd = -1;
 static pthread_mutex_t rejestr_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static inline int rejestr_init(const char *nazwa_pliku) {
+static inline int rejestr_init(const char *nazwa_pliku, int truncate) {
     if (nazwa_pliku == NULL) {
         nazwa_pliku = REJESTR_PLIK;
     }
 
-    int tmp_fd = creat(nazwa_pliku, 0644);
-    if (tmp_fd != -1) {
-        close(tmp_fd);
+    if (truncate) {
+        int tmp_fd = creat(nazwa_pliku, 0644);
+        if (tmp_fd != -1) {
+            close(tmp_fd);
+        }
     }
 
-    rejestr_fd = open(nazwa_pliku, O_WRONLY | O_APPEND);
+    rejestr_fd = open(nazwa_pliku, O_WRONLY | O_APPEND | O_CREAT, 0644);
     if (rejestr_fd == -1) {
         perror("open rejestr");
         return -1;
     }
-    
-    char naglowek[REJESTR_BUFOR];
-    time_t teraz = time(NULL);
-    struct tm *t = localtime(&teraz);
-    
-    int len = snprintf(naglowek, sizeof(naglowek),
-        "\n========================================\n"
-        "  ROZPOCZECIE SYMULACJI: %04d-%02d-%02d %02d:%02d:%02d\n"
-        "========================================\n\n",
-        t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-        t->tm_hour, t->tm_min, t->tm_sec);
-    
-    write(rejestr_fd, naglowek, len);
-    
+
+    if (truncate) {
+        char naglowek[REJESTR_BUFOR];
+        time_t teraz = time(NULL);
+        struct tm *t = localtime(&teraz);
+
+        int len = snprintf(naglowek, sizeof(naglowek),
+            "\n========================================\n"
+            "  ROZPOCZECIE SYMULACJI: %04d-%02d-%02d %02d:%02d:%02d\n"
+            "========================================\n\n",
+            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+            t->tm_hour, t->tm_min, t->tm_sec);
+
+        write(rejestr_fd, naglowek, len);
+    }
+
     return 0;
 }
 

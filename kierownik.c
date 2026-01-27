@@ -75,7 +75,7 @@ void inicjalizuj() {
         printf("Kierownik: Otwarto FIFO do odbioru zgloszen.\n");
     }
 
-    rejestr_init(NULL);
+    rejestr_init(NULL, 0);
 }
 
 void sprawdz_zgloszenia_fifo() {

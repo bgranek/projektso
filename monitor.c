@@ -76,8 +76,8 @@ int main(int argc, char *argv[]) {
         while (token != NULL) {
             if (strncmp(token, "HALA", 4) == 0) {
                 printf("Status: ONLINE\n\n");
-            } else if (strncmp(token, "KIBICOW:", 8) == 0) {
-                printf("Kibicow w hali: %s\n", token + 8);
+            } else if (strncmp(token, "OSOB_W_HALI:", 12) == 0) {
+                printf("Osob w hali: %s (faktyczna liczba)\n", token + 12);
             } else if (strncmp(token, "VIP:", 4) == 0) {
                 printf("VIP: %s\n", token + 4);
             } else if (strncmp(token, "POJEMNOSC:", 10) == 0) {
@@ -96,7 +96,7 @@ int main(int argc, char *argv[]) {
                 const char *fazy[] = {"PRZED MECZEM", "MECZ TRWA", "PO MECZU"};
                 printf("Faza: %s\n", fazy[faza]);
             } else if (token[0] == 'S' && token[1] >= '0' && token[1] <= '7') {
-                if (token[1] == '0') printf("\nSektory:\n");
+                if (token[1] == '0') printf("\nSektory (bilety sprzedane):\n");
                 char *dane = strchr(token, ':');
                 if (dane) {
                     int nr = token[1] - '0';
