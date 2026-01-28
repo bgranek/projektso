@@ -1,40 +1,15 @@
 #include "common.h"
-#include <poll.h>
 
 int shm_id = -1;
 int fifo_fd = -1;
-int pipe_fd = -1;
 StanHali *stan_hali = NULL;
-volatile sig_atomic_t shutdown_requested = 0;
 
 void obsluga_wyjscia() {
-    if (pipe_fd != -1) {
-        close(pipe_fd);
-    }
     if (fifo_fd != -1) {
         close(fifo_fd);
     }
     if (stan_hali != NULL) {
         shmdt(stan_hali);
-    }
-}
-
-void sprawdz_pipe() {
-    if (pipe_fd == -1) return;
-
-    struct pollfd pfd;
-    pfd.fd = pipe_fd;
-    pfd.events = POLLIN;
-
-    if (poll(&pfd, 1, 0) > 0) {
-        int cmd;
-        if (read(pipe_fd, &cmd, sizeof(cmd)) > 0) {
-            if (cmd == PIPE_CMD_SHUTDOWN) {
-                printf("\nKierownik: Otrzymano polecenie zamkniecia przez pipe.\n");
-                rejestr_log("KIEROWNIK", "Shutdown przez pipe");
-                shutdown_requested = 1;
-            }
-        }
     }
 }
 
@@ -56,16 +31,6 @@ void inicjalizuj() {
     if (stan_hali == (void*)-1) {
         perror("shmat");
         exit(EXIT_FAILURE);
-    }
-
-    pipe_fd = PIPE_KIEROWNIK_FD;
-    int flags = fcntl(pipe_fd, F_GETFL);
-    if (flags != -1) {
-        fcntl(pipe_fd, F_SETFL, flags | O_NONBLOCK);
-        printf("Kierownik: Pipe od main aktywny (fd=%d).\n", pipe_fd);
-        rejestr_log("KIEROWNIK", "Pipe aktywny fd=%d", pipe_fd);
-    } else {
-        pipe_fd = -1;
     }
 
     fifo_fd = open(FIFO_PRACOWNIK_KIEROWNIK, O_RDONLY | O_NONBLOCK);
@@ -305,12 +270,6 @@ int main() {
     rejestr_log("KIEROWNIK", "Start PID %d", getpid());
 
     while (1) {
-        sprawdz_pipe();
-        if (shutdown_requested) {
-            printf("Kierownik: Zamykanie na polecenie main...\n");
-            break;
-        }
-
         sprawdz_zgloszenia_fifo();
 
         printf("\n+-------------------------------+\n");

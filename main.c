@@ -6,7 +6,6 @@
 int shm_id = -1;
 int sem_id = -1;
 int msg_id = -1;
-int pipe_kierownik[2] = {-1, -1};
 StanHali *stan_hali = NULL;
 int pojemnosc_K = POJEMNOSC_DOMYSLNA;
 int czas_do_meczu = CZAS_DO_MECZU_DOMYSLNY;
@@ -16,19 +15,8 @@ void usun_fifo() {
     unlink(FIFO_PRACOWNIK_KIEROWNIK);
 }
 
-void wyslij_shutdown_pipe() {
-    if (pipe_kierownik[1] != -1) {
-        int cmd = PIPE_CMD_SHUTDOWN;
-        write(pipe_kierownik[1], &cmd, sizeof(cmd));
-        close(pipe_kierownik[1]);
-        pipe_kierownik[1] = -1;
-    }
-}
-
 void sprzataj_zasoby() {
     rejestr_log("MAIN", "Rozpoczynam sprzatanie zasobow");
-
-    wyslij_shutdown_pipe();
 
     if (stan_hali != NULL) {
         rejestr_statystyki(
@@ -108,7 +96,6 @@ void inicjalizuj_zasoby() {
     stan_hali->pojemnosc_calkowita = pojemnosc_K;
     stan_hali->pojemnosc_sektora = pojemnosc_K / LICZBA_SEKTOROW;
     stan_hali->limit_vip = (pojemnosc_K * 3) / 1000;
-    if (stan_hali->limit_vip < 1) stan_hali->limit_vip = 1;
     stan_hali->pojemnosc_vip = stan_hali->limit_vip;
 
     stan_hali->pid_kierownika = getpid();
@@ -230,33 +217,6 @@ void* watek_serwera_socket(void *arg) {
     return NULL;
 }
 
-void uruchom_kierownika() {
-    if (pipe(pipe_kierownik) == -1) {
-        perror("pipe kierownik");
-        exit(EXIT_FAILURE);
-    }
-
-    pid_t pid = fork();
-    if (pid == 0) {
-        close(pipe_kierownik[1]);
-        if (dup2(pipe_kierownik[0], PIPE_KIEROWNIK_FD) == -1) {
-            perror("dup2 kierownik");
-            exit(EXIT_FAILURE);
-        }
-        close(pipe_kierownik[0]);
-        execl("./kierownik", "kierownik", NULL);
-        perror("execl kierownik");
-        exit(EXIT_FAILURE);
-    } else if (pid < 0) {
-        perror("fork kierownik");
-        exit(EXIT_FAILURE);
-    }
-
-    close(pipe_kierownik[0]);
-    printf("MAIN: Uruchomiono kierownika (PID: %d) z pipe\n", pid);
-    rejestr_log("MAIN", "Uruchomiono kierownika PID: %d z pipe", pid);
-}
-
 void uruchom_kasjerow() {
     for (int i = 0; i < LICZBA_KAS; i++) {
         pid_t pid = fork();
@@ -359,9 +319,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("\nMAIN: Uruchamianie systemu...\n");
-
-    uruchom_kierownika();
-    sleep(1);
+    printf("MAIN: Uruchom kierownika w osobnym terminalu: ./kierownik\n");
 
     uruchom_kasjerow();
     uruchom_pracownikow();
@@ -401,7 +359,28 @@ int main(int argc, char *argv[]) {
                 printf("%s\n", KOLOR_RESET);
                 rejestr_log("MAIN", "MECZ ZAKONCZONY");
 
-                printf("MAIN: Koniec meczu - zamykam symulacje.\n");
+                printf("MAIN: Czekam az kibice opuszcza hale...\n");
+                rejestr_log("MAIN", "Czekam na wyjscie kibicow");
+
+                int timeout_wyjscia = 30;
+                while (stan_hali->suma_kibicow_w_hali > 0 && timeout_wyjscia > 0) {
+                    printf("MAIN: Pozostalo kibicow: %d (timeout: %ds)\n",
+                           stan_hali->suma_kibicow_w_hali, timeout_wyjscia);
+                    sleep(1);
+                    timeout_wyjscia--;
+                }
+
+                if (stan_hali->suma_kibicow_w_hali > 0) {
+                    printf("MAIN: Timeout - %d kibicow nie opuscilo hali.\n",
+                           stan_hali->suma_kibicow_w_hali);
+                    rejestr_log("MAIN", "Timeout - %d kibicow pozostalo",
+                               stan_hali->suma_kibicow_w_hali);
+                } else {
+                    printf("MAIN: Wszyscy kibice opuscili hale.\n");
+                    rejestr_log("MAIN", "Wszyscy kibice opuscili hale");
+                }
+
+                printf("MAIN: Zamykam symulacje.\n");
                 rejestr_log("MAIN", "Koniec symulacji po zakonczeniu meczu");
                 signal(SIGTERM, SIG_IGN);
                 kill(0, SIGTERM);
@@ -416,11 +395,6 @@ int main(int argc, char *argv[]) {
             printf("MAIN: Ewakuacja w toku - wstrzymano generowanie kibicow.\n");
             rejestr_log("MAIN", "Ewakuacja - wstrzymano generowanie kibicow");
             sleep(2);
-            continue;
-        }
-
-        if (stan_hali->faza_meczu == FAZA_MECZ) {
-            sleep(1);
             continue;
         }
 

@@ -309,13 +309,6 @@ void idz_do_bramki() {
                KOLOR_MAGENTA, getpid(), KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d VIP wchodzi bez kontroli", getpid());
 
-        if (mam_noz) {
-            printf("%sKibic %d (VIP): Ochrona VIP znalazla noz!%s\n",
-                   KOLOR_CZERWONY, getpid(), KOLOR_RESET);
-            rejestr_log("KIBIC", "PID %d VIP wyrzucony - noz", getpid());
-            return;
-        }
-
         struct sembuf op = {0, -1, 0};
         semop(sem_id, &op, 1);
         stan_hali->suma_kibicow_w_hali++;
@@ -507,6 +500,9 @@ void idz_do_bramki() {
     semop(sem_id, &op, 1);
     stan_hali->suma_kibicow_w_hali--;
     stan_hali->liczniki_sektorow[numer_sektora] -= liczba_biletow;
+    if (stan_hali->liczniki_sektorow[numer_sektora] < 0) {
+        stan_hali->liczniki_sektorow[numer_sektora] = 0;
+    }
     op.sem_op = 1;
     semop(sem_id, &op, 1);
 
