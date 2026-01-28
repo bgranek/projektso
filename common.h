@@ -132,6 +132,7 @@ typedef struct {
     int limit_vip;
 
     int liczniki_sektorow[LICZBA_WSZYSTKICH_SEKTOROW];
+    int osoby_w_sektorze[LICZBA_WSZYSTKICH_SEKTOROW];
     int sektor_zablokowany[LICZBA_SEKTOROW];
     int sektor_ewakuowany[LICZBA_SEKTOROW];
 

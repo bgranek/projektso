@@ -138,7 +138,7 @@ void obsluguj_ewakuacje() {
 
     if (semop(sem_id, operacje, 1) == -1) return;
 
-    int liczba_osob = stan_hali->liczniki_sektorow[id_sektora];
+    int liczba_osob = stan_hali->osoby_w_sektorze[id_sektora];
 
     operacje[0].sem_op = 1;
     semop(sem_id, operacje, 1);

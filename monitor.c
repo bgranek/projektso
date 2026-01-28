@@ -17,12 +17,13 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
             interwal = atoi(argv[++i]);
             if (interwal < 1) interwal = 1;
-        } else if (strcmp(argv[i], "-h") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             host = argv[++i];
-        } else if (strcmp(argv[i], "--help") == 0) {
-            printf("Uzycie: %s [-i interwal] [-h host]\n", argv[0]);
+        } else if (strcmp(argv[i], "-h") == 0) {
+            printf("Uzycie: %s [-i interwal] [-s serwer]\n", argv[0]);
             printf("  -i interwal  Odswiezanie co N sekund (domyslnie: 2)\n");
-            printf("  -h host      Adres serwera (domyslnie: 127.0.0.1)\n");
+            printf("  -s serwer    Adres serwera (domyslnie: 127.0.0.1)\n");
+            printf("  -h           Wyswietl pomoc\n");
             return 0;
         }
     }
@@ -77,7 +78,9 @@ int main(int argc, char *argv[]) {
             if (strncmp(token, "HALA", 4) == 0) {
                 printf("Status: ONLINE\n\n");
             } else if (strncmp(token, "OSOB_W_HALI:", 12) == 0) {
-                printf("Osob w hali: %s (faktyczna liczba)\n", token + 12);
+                printf("Osob w hali: %s\n", token + 12);
+            } else if (strncmp(token, "SUMA_BILETOW:", 13) == 0) {
+                printf("Biletow sprzedanych: %s\n", token + 13);
             } else if (strncmp(token, "VIP:", 4) == 0) {
                 printf("VIP: %s\n", token + 4);
             } else if (strncmp(token, "POJEMNOSC:", 10) == 0) {
@@ -96,12 +99,20 @@ int main(int argc, char *argv[]) {
                 const char *fazy[] = {"PRZED MECZEM", "MECZ TRWA", "PO MECZU"};
                 printf("Faza: %s\n", fazy[faza]);
             } else if (token[0] == 'S' && token[1] >= '0' && token[1] <= '7') {
-                if (token[1] == '0') printf("\nSektory (bilety sprzedane):\n");
+                if (token[1] == '0') printf("\nSektory (bilety/pojemnosc | osoby w srodku):\n");
                 char *dane = strchr(token, ':');
                 if (dane) {
                     int nr = token[1] - '0';
                     char *blok = strstr(token, "[B]");
-                    printf("  [%d] %s %s\n", nr, dane + 1, blok ? "\033[33m(ZABLOKOWANY)\033[0m" : "");
+                    char *osob = strstr(token, "(osob:");
+                    int osoby = 0;
+                    if (osob) osoby = atoi(osob + 6);
+                    char bilety_info[32];
+                    strncpy(bilety_info, dane + 1, sizeof(bilety_info) - 1);
+                    char *paren = strchr(bilety_info, '(');
+                    if (paren) *paren = '\0';
+                    printf("  [%d] bilety: %s | osoby: %d %s\n", nr, bilety_info, osoby,
+                           blok ? "\033[33m(ZABLOKOWANY)\033[0m" : "");
                 }
             }
             token = strtok(NULL, "|");

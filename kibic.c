@@ -40,9 +40,9 @@ void ewakuuj_sie() {
 
     stan_hali->suma_kibicow_w_hali--;
     if (numer_sektora >= 0 && numer_sektora < LICZBA_WSZYSTKICH_SEKTOROW) {
-        stan_hali->liczniki_sektorow[numer_sektora] -= liczba_biletow;
-        if (stan_hali->liczniki_sektorow[numer_sektora] < 0) {
-            stan_hali->liczniki_sektorow[numer_sektora] = 0;
+        stan_hali->osoby_w_sektorze[numer_sektora]--;
+        if (stan_hali->osoby_w_sektorze[numer_sektora] < 0) {
+            stan_hali->osoby_w_sektorze[numer_sektora] = 0;
         }
     }
     if (jestem_vip && numer_sektora == SEKTOR_VIP) {
@@ -305,6 +305,12 @@ void idz_do_bramki() {
     }
 
     if (numer_sektora == SEKTOR_VIP) {
+        if (stan_hali->ewakuacja_trwa) {
+            printf("%sKibic %d (VIP): Ewakuacja trwa - nie wchodze.%s\n",
+                   KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+            return;
+        }
+
         printf("%sKibic %d (VIP): Wchodze osobnym wejsciem VIP bez kontroli.%s\n",
                KOLOR_MAGENTA, getpid(), KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d VIP wchodzi bez kontroli", getpid());
@@ -312,6 +318,7 @@ void idz_do_bramki() {
         struct sembuf op = {0, -1, 0};
         semop(sem_id, &op, 1);
         stan_hali->suma_kibicow_w_hali++;
+        stan_hali->osoby_w_sektorze[SEKTOR_VIP]++;
         op.sem_op = 1;
         semop(sem_id, &op, 1);
 
@@ -320,11 +327,11 @@ void idz_do_bramki() {
                KOLOR_ZIELONY, getpid(), KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d wszedl na sektor VIP", getpid());
 
-        while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie) {
+        while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie && !stan_hali->ewakuacja_trwa) {
             sleep(1);
         }
 
-        if (ewakuacja_mnie) {
+        if (ewakuacja_mnie || stan_hali->ewakuacja_trwa) {
             ewakuuj_sie();
             return;
         }
@@ -332,7 +339,7 @@ void idz_do_bramki() {
         op.sem_op = -1;
         semop(sem_id, &op, 1);
         stan_hali->suma_kibicow_w_hali--;
-        stan_hali->liczniki_sektorow[SEKTOR_VIP] -= liczba_biletow;
+        stan_hali->osoby_w_sektorze[SEKTOR_VIP]--;
         stan_hali->liczba_vip--;
         op.sem_op = 1;
         semop(sem_id, &op, 1);
@@ -365,6 +372,15 @@ void idz_do_bramki() {
 
     while (moje_miejsce == -1) {
         if (stan_hali->ewakuacja_trwa) return;
+
+        if (stan_hali->sektor_zablokowany[numer_sektora]) {
+            printf("%sKibic %d: Sektor %d zablokowany podczas czekania. Czekam...%s\n",
+                   KOLOR_ZOLTY, getpid(), numer_sektora, KOLOR_RESET);
+            while (stan_hali->sektor_zablokowany[numer_sektora]) {
+                if (stan_hali->ewakuacja_trwa) return;
+                sleep(1);
+            }
+        }
 
         struct sembuf operacje[1];
         operacje[0].sem_num = 0;
@@ -421,6 +437,11 @@ void idz_do_bramki() {
 
         while (1) {
             if (stan_hali->ewakuacja_trwa) return;
+
+            if (stan_hali->sektor_zablokowany[numer_sektora]) {
+                usleep(100000);
+                continue;
+            }
 
             int zgoda = stan_hali->bramki[numer_sektora][wybrane_stanowisko]
                        .miejsca[moje_miejsce].zgoda_na_wejscie;
@@ -479,6 +500,7 @@ void idz_do_bramki() {
     struct sembuf op = {0, -1, 0};
     semop(sem_id, &op, 1);
     stan_hali->suma_kibicow_w_hali++;
+    stan_hali->osoby_w_sektorze[numer_sektora]++;
     op.sem_op = 1;
     semop(sem_id, &op, 1);
 
@@ -487,11 +509,11 @@ void idz_do_bramki() {
            KOLOR_ZIELONY, getpid(), numer_sektora, KOLOR_RESET);
     rejestr_log("KIBIC", "PID %d wszedl na sektor %d", getpid(), numer_sektora);
 
-    while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie) {
+    while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie && !stan_hali->ewakuacja_trwa) {
         sleep(1);
     }
 
-    if (ewakuacja_mnie) {
+    if (ewakuacja_mnie || stan_hali->ewakuacja_trwa) {
         ewakuuj_sie();
         return;
     }
@@ -499,9 +521,9 @@ void idz_do_bramki() {
     op.sem_op = -1;
     semop(sem_id, &op, 1);
     stan_hali->suma_kibicow_w_hali--;
-    stan_hali->liczniki_sektorow[numer_sektora] -= liczba_biletow;
-    if (stan_hali->liczniki_sektorow[numer_sektora] < 0) {
-        stan_hali->liczniki_sektorow[numer_sektora] = 0;
+    stan_hali->osoby_w_sektorze[numer_sektora]--;
+    if (stan_hali->osoby_w_sektorze[numer_sektora] < 0) {
+        stan_hali->osoby_w_sektorze[numer_sektora] = 0;
     }
     op.sem_op = 1;
     semop(sem_id, &op, 1);

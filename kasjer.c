@@ -134,6 +134,7 @@ void obsluz_klienta() {
 
         for (int i = 0; i < LICZBA_SEKTOROW; i++) {
             int idx = (start_sektor + i) % LICZBA_SEKTOROW;
+            if (stan_hali->sektor_zablokowany[idx]) continue;
             if (stan_hali->liczniki_sektorow[idx] + zadane_bilety <= stan_hali->pojemnosc_sektora) {
                 stan_hali->liczniki_sektorow[idx] += zadane_bilety;
                 znaleziono_sektor = idx;
@@ -145,6 +146,7 @@ void obsluz_klienta() {
         if (znaleziono_sektor == -1) {
             for (int i = 0; i < LICZBA_SEKTOROW; i++) {
                 int idx = (start_sektor + i) % LICZBA_SEKTOROW;
+                if (stan_hali->sektor_zablokowany[idx]) continue;
                 int wolne = stan_hali->pojemnosc_sektora - stan_hali->liczniki_sektorow[idx];
                 if (wolne > 0) {
                     stan_hali->liczniki_sektorow[idx] += wolne;
