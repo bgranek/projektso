@@ -155,6 +155,8 @@ void* watek_serwera_socket(void *arg) {
         return NULL;
     }
 
+    fcntl(server_fd, F_SETFD, FD_CLOEXEC);
+
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
@@ -185,6 +187,7 @@ void* watek_serwera_socket(void *arg) {
             if (errno == EINTR) continue;
             break;
         }
+        fcntl(client_fd, F_SETFD, FD_CLOEXEC);
 
         char bufor[512];
         int suma_biletow = 0;

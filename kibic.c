@@ -176,7 +176,6 @@ int sprawdz_vip() {
 
     int moze_byc_vip = 0;
     if (stan_hali->liczba_vip < stan_hali->limit_vip) {
-        stan_hali->liczba_vip++;
         moze_byc_vip = 1;
     }
 
@@ -318,6 +317,14 @@ void idz_do_bramki() {
 
         struct sembuf op = {0, -1, 0};
         semop(sem_id, &op, 1);
+        if (stan_hali->liczba_vip >= stan_hali->limit_vip) {
+            op.sem_op = 1;
+            semop(sem_id, &op, 1);
+            printf("%sKibic %d (VIP): Brak miejsc VIP - za pozno.%s\n",
+                   KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+            return;
+        }
+        stan_hali->liczba_vip++;
         stan_hali->suma_kibicow_w_hali++;
         stan_hali->osoby_w_sektorze[SEKTOR_VIP]++;
         op.sem_op = 1;
@@ -367,9 +374,14 @@ void idz_do_bramki() {
 
     int wybrane_stanowisko = rand() % 2;
     int moje_miejsce = -1;
+    int retry_bramka = 1;
 
     printf("Kibic %d: Ide do stanowiska %d w sektorze %d.\n",
            getpid(), wybrane_stanowisko, numer_sektora);
+
+    while (retry_bramka && !proba_vip) {
+    retry_bramka = 0;
+    moje_miejsce = -1;
 
     while (moje_miejsce == -1) {
         if (stan_hali->ewakuacja_trwa) return;
@@ -469,18 +481,41 @@ void idz_do_bramki() {
                 op.sem_op = 1;
                 semop(sem_id, &op, 1);
                 return;
+            } else if (zgoda == 4) {
+                printf("%sKibic %d: Przepuszczony - zla druzyna, wracam do kolejki%s\n",
+                       KOLOR_ZOLTY, getpid(), KOLOR_RESET);
+                rejestr_log("KIBIC", "PID %d przepuszczony - zla druzyna", getpid());
+                struct sembuf op = {0, -1, 0};
+                semop(sem_id, &op, 1);
+                memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
+                       .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
+                op.sem_op = 1;
+                semop(sem_id, &op, 1);
+                przepuszczeni++;
+                if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
+                    printf("%sKibic %d: FRUSTRACJA po przepuszczeniu! Wpycham sie!%s\n",
+                           KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+                    rejestr_log("KIBIC", "PID %d frustracja po przepuszczeniu", getpid());
+                    proba_vip = 1;
+                }
+                retry_bramka = 1;
+                usleep(100000);
+                break;
             } else if (zgoda == 1) {
                 break;
             }
             usleep(50000);
         }
 
-        struct sembuf op = {0, -1, 0};
-        semop(sem_id, &op, 1);
-        memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
-               .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
-        op.sem_op = 1;
-        semop(sem_id, &op, 1);
+        if (!retry_bramka) {
+            struct sembuf op = {0, -1, 0};
+            semop(sem_id, &op, 1);
+            memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
+                   .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
+            op.sem_op = 1;
+            semop(sem_id, &op, 1);
+        }
+    }
     }
 
     if (proba_vip) {

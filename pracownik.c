@@ -237,6 +237,16 @@ void obsluz_stanowisko(int nr_stanowiska) {
                 rejestr_log("KONTROLA", "Sektor %d Stan %d: Wpuszczono PID %d druzyna %c",
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
                            (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B');
+            } else {
+                printf("%sPracownik %d (Stanowisko %d): PID %d ma zla druzyne (%c zamiast %c) - wracaj do kolejki!%s\n",
+                       KOLOR_ZOLTY,
+                       id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
+                       (b->miejsca[i].druzyna == DRUZYNA_A) ? 'A' : 'B',
+                       (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B',
+                       KOLOR_RESET);
+                rejestr_log("KONTROLA", "Sektor %d Stan %d: PID %d zla druzyna - przepuszczony",
+                           id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
+                b->miejsca[i].zgoda_na_wejscie = 4;
             }
         }
     }
