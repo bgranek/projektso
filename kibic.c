@@ -17,6 +17,7 @@ int liczba_biletow = 1;
 
 int jestem_dzieckiem = 0;
 int jestem_rodzicem = 0;
+int jestem_kolega = 0;
 pid_t pid_partnera = 0;
 int id_rodziny = -1;
 
@@ -562,6 +563,28 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    if (argc >= 4 && strcmp(argv[1], "--kolega") == 0) {
+        jestem_kolega = 1;
+        moja_druzyna = atoi(argv[2]);
+        numer_sektora = atoi(argv[3]);
+        ma_bilet = 1;
+        moj_wiek = 18 + (rand() % 42);
+        mam_noz = ((rand() % 100) < SZANSA_NA_PRZEDMIOT);
+
+        printf("%sKibic %d (KOLEGA): Start | Druzyna: %c | Sektor: %d | Wiek: %d | Noz: %s%s\n",
+               KOLOR_ZIELONY, getpid(),
+               (moja_druzyna == DRUZYNA_A) ? 'A' : 'B',
+               numer_sektora, moj_wiek,
+               mam_noz ? "TAK" : "NIE",
+               KOLOR_RESET);
+        rejestr_log("KIBIC", "PID %d kolega: Druzyna %c, Sektor %d, Wiek %d",
+                   getpid(), (moja_druzyna == DRUZYNA_A) ? 'A' : 'B',
+                   numer_sektora, moj_wiek);
+
+        idz_do_bramki();
+        return 0;
+    }
+
     moja_druzyna = (rand() % 2) ? DRUZYNA_A : DRUZYNA_B;
     jestem_vip = sprawdz_vip();
     mam_noz = ((rand() % 100) < SZANSA_NA_PRZEDMIOT);
@@ -617,7 +640,11 @@ int main(int argc, char *argv[]) {
         }
     } else {
         moj_wiek = (rand() % 60) + 5;
-        liczba_biletow = (rand() % MAX_BILETOW_NA_KIBICA) + 1;
+        if (jestem_vip) {
+            liczba_biletow = 1;
+        } else {
+            liczba_biletow = (rand() % MAX_BILETOW_NA_KIBICA) + 1;
+        }
 
         printf("Kibic %d: Start | Druzyna: %c | Wiek: %d | VIP: %s | Noz: %s | Bilety: %d\n",
                getpid(),
@@ -637,7 +664,25 @@ int main(int argc, char *argv[]) {
 
         sprobuj_kupic_bilet();
         if (ma_bilet) {
-            idz_do_bramki();
+            if (!jestem_vip && liczba_biletow == 2) {
+                pid_t pid_kolegi = fork();
+                if (pid_kolegi == 0) {
+                    char arg_druzyna[16], arg_sektor[16];
+                    snprintf(arg_druzyna, sizeof(arg_druzyna), "%d", moja_druzyna);
+                    snprintf(arg_sektor, sizeof(arg_sektor), "%d", numer_sektora);
+                    execl("./kibic", "kibic", "--kolega", arg_druzyna, arg_sektor, NULL);
+                    perror("execl kibic kolega");
+                    exit(EXIT_FAILURE);
+                } else if (pid_kolegi > 0) {
+                    printf("%sKibic %d: Przekazuje bilet koledze (PID %d)%s\n",
+                           KOLOR_ZIELONY, getpid(), pid_kolegi, KOLOR_RESET);
+                    rejestr_log("KIBIC", "PID %d przekazal bilet koledze %d", getpid(), pid_kolegi);
+                    idz_do_bramki();
+                    waitpid(pid_kolegi, NULL, 0);
+                }
+            } else {
+                idz_do_bramki();
+            }
         }
     }
 
