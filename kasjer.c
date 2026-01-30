@@ -1,6 +1,13 @@
 #include "common.h"
 #include <time.h>
 
+volatile sig_atomic_t kasjer_dziala = 1;
+
+void handler_term(int sig) {
+    (void)sig;
+    kasjer_dziala = 0;
+}
+
 int id_kasjera = -1;
 int shm_id = -1;
 int msg_id = -1;
@@ -29,7 +36,7 @@ void inicjalizuj() {
     msg_id = msgget(klucz_msg, 0600);
     SPRAWDZ(msg_id);
 
-    sem_id = semget(klucz_sem, 2, 0600);
+    sem_id = semget(klucz_sem, SEM_TOTAL, 0600);
     SPRAWDZ(sem_id);
 
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
@@ -103,8 +110,8 @@ void obsluz_klienta() {
 
     KomunikatBilet zapytanie;
     if (msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long),
-               TYP_KOMUNIKATU_ZAPYTANIE, IPC_NOWAIT) == -1) {
-        if (errno == ENOMSG) return;
+               TYP_KOMUNIKATU_ZAPYTANIE, 0) == -1) {
+        if (errno == EINTR) return;
         if (errno == EIDRM || errno == EINVAL) exit(0);
         perror("msgrcv");
         return;
@@ -221,6 +228,12 @@ int main(int argc, char *argv[]) {
     srand(time(NULL) ^ (getpid() << 16));
     inicjalizuj();
 
+    struct sigaction sa;
+    sa.sa_handler = handler_term;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTERM, &sa, NULL);
+
     stan_hali->pidy_kasjerow[id_kasjera] = getpid();
     aktualizuj_status();
 
@@ -230,7 +243,7 @@ int main(int argc, char *argv[]) {
            stan_hali->kasa_aktywna[id_kasjera] ? "[AKTYWNA]" : "[NIEAKTYWNA]");
     rejestr_log("KASJER", "Kasa %d: Start PID %d", id_kasjera, getpid());
 
-    while (1) {
+    while (kasjer_dziala) {
         if (stan_hali->ewakuacja_trwa) {
             printf("Kasjer %d: Ewakuacja - zamykam kase.\n", id_kasjera);
             rejestr_log("KASJER", "Kasa %d: Zamknieta - ewakuacja", id_kasjera);
@@ -243,14 +256,11 @@ int main(int argc, char *argv[]) {
                 printf("Kasjer %d: Wszystkie bilety sprzedane - zamykam kase.\n", id_kasjera);
                 rejestr_log("KASJER", "Kasa %d: Zamknieta - wyprzedane", id_kasjera);
             }
-            obsluz_klienta();
-            usleep(100000);
-            continue;
+            break;
         }
 
         aktualizuj_status();
         obsluz_klienta();
-        usleep(100000);
     }
 
     return 0;

@@ -50,6 +50,18 @@
 
 #define SOCKET_MONITOR_PORT 9999
 
+#define SEM_SLOT_BASE 2
+#define SEM_SEKTOR_BASE 50
+#define SEM_RODZINA_BASE 58
+#define SEM_FAZA_MECZU 108
+#define SEM_PRACA_BASE 109
+#define SEM_TOTAL 117
+
+#define SEM_SLOT(s,st,m) (SEM_SLOT_BASE + (s)*6 + (st)*3 + (m))
+#define SEM_SEKTOR(s) (SEM_SEKTOR_BASE + (s))
+#define SEM_RODZINA(id) (SEM_RODZINA_BASE + (id))
+#define SEM_PRACA(s) (SEM_PRACA_BASE + (s))
+
 #define DRUZYNA_A 1
 #define DRUZYNA_B 2
 

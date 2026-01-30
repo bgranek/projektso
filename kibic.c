@@ -110,20 +110,34 @@ void ustaw_przy_bramce(int flaga) {
         r->dziecko_przy_bramce = flaga;
     }
 
+    int both_present = (r->rodzic_przy_bramce && r->dziecko_przy_bramce);
+
     op.sem_op = 1;
     semop(sem_id, &op, 1);
+
+    if (both_present && flaga) {
+        struct sembuf sig_rodz = {SEM_RODZINA(id_rodziny), 2, 0};
+        semop(sem_id, &sig_rodz, 1);
+    }
 }
 
 int czekaj_na_partnera() {
     if (id_rodziny < 0) return 1;
 
+    Rodzina *r = &stan_hali->rejestr_rodzin.rodziny[id_rodziny];
+    if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
+        return 1;
+    }
+
     for (int i = 0; i < 100; i++) {
-        Rodzina *r = &stan_hali->rejestr_rodzin.rodziny[id_rodziny];
-        if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
-            return 1;
-        }
         if (stan_hali->ewakuacja_trwa) return 0;
-        usleep(100000);
+        struct sembuf wait_rodz = {SEM_RODZINA(id_rodziny), -1, 0};
+        if (semop(sem_id, &wait_rodz, 1) == 0) {
+            if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
+                return 1;
+            }
+        }
+        if (errno == EINTR) continue;
     }
     return 0;
 }
@@ -142,7 +156,7 @@ void inicjalizuj() {
     msg_id = msgget(klucz_msg, 0600);
     if (msg_id == -1) exit(0);
 
-    sem_id = semget(klucz_sem, 2, 0600);
+    sem_id = semget(klucz_sem, SEM_TOTAL, 0600);
     if (sem_id == -1) exit(0);
 
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
@@ -285,7 +299,6 @@ void sprobuj_kupic_bilet() {
 
 void idz_do_bramki() {
     if (!ma_bilet) return;
-    sleep(1);
 
     if (jestem_dzieckiem || jestem_rodzicem) {
         ustaw_przy_bramce(1);
@@ -336,7 +349,11 @@ void idz_do_bramki() {
         rejestr_log("KIBIC", "PID %d wszedl na sektor VIP", getpid());
 
         while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie && !stan_hali->ewakuacja_trwa) {
-            sleep(1);
+            struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
+            if (semop(sem_id, &wait_faza, 1) == -1) {
+                if (errno == EINTR) continue;
+                break;
+            }
         }
 
         if (ewakuacja_mnie || stan_hali->ewakuacja_trwa) {
@@ -364,7 +381,8 @@ void idz_do_bramki() {
         rejestr_log("KIBIC", "PID %d czeka - sektor %d zablokowany", getpid(), numer_sektora);
         while (stan_hali->sektor_zablokowany[numer_sektora]) {
             if (stan_hali->ewakuacja_trwa) return;
-            sleep(1);
+            struct sembuf wait_sek = {SEM_SEKTOR(numer_sektora), -1, 0};
+            semop(sem_id, &wait_sek, 1);
         }
     }
 
@@ -391,7 +409,8 @@ void idz_do_bramki() {
                    KOLOR_ZOLTY, getpid(), numer_sektora, KOLOR_RESET);
             while (stan_hali->sektor_zablokowany[numer_sektora]) {
                 if (stan_hali->ewakuacja_trwa) return;
-                sleep(1);
+                struct sembuf wait_sek = {SEM_SEKTOR(numer_sektora), -1, 0};
+                semop(sem_id, &wait_sek, 1);
             }
         }
 
@@ -440,7 +459,6 @@ void idz_do_bramki() {
         semop(sem_id, operacje, 1);
 
         if (moje_miejsce == -1 && !proba_vip) {
-            usleep(100000);
         }
     }
 
@@ -452,8 +470,15 @@ void idz_do_bramki() {
             if (stan_hali->ewakuacja_trwa) return;
 
             if (stan_hali->sektor_zablokowany[numer_sektora]) {
-                usleep(100000);
+                struct sembuf wait_sek = {SEM_SEKTOR(numer_sektora), -1, 0};
+                semop(sem_id, &wait_sek, 1);
                 continue;
+            }
+
+            struct sembuf wait_slot = {SEM_SLOT(numer_sektora, wybrane_stanowisko, moje_miejsce), -1, 0};
+            if (semop(sem_id, &wait_slot, 1) == -1) {
+                if (errno == EINTR) continue;
+                return;
             }
 
             int zgoda = stan_hali->bramki[numer_sektora][wybrane_stanowisko]
@@ -499,12 +524,10 @@ void idz_do_bramki() {
                     proba_vip = 1;
                 }
                 retry_bramka = 1;
-                usleep(100000);
                 break;
             } else if (zgoda == 1) {
                 break;
             }
-            usleep(50000);
         }
 
         if (!retry_bramka) {
@@ -546,7 +569,11 @@ void idz_do_bramki() {
     rejestr_log("KIBIC", "PID %d wszedl na sektor %d", getpid(), numer_sektora);
 
     while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie && !stan_hali->ewakuacja_trwa) {
-        sleep(1);
+        struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
+        if (semop(sem_id, &wait_faza, 1) == -1) {
+            if (errno == EINTR) continue;
+            break;
+        }
     }
 
     if (ewakuacja_mnie || stan_hali->ewakuacja_trwa) {

@@ -18,16 +18,11 @@ typedef struct {
 
 void obsluga_wyjscia() {
     praca_trwa = 0;
-    
     pthread_cond_broadcast(&cond_sektor);
-    
-    for (int i = 0; i < 2; i++) {
-        pthread_join(watki_stanowisk[i], NULL);
-    }
-    
+
     pthread_mutex_destroy(&mutex_sektor);
     pthread_cond_destroy(&cond_sektor);
-    
+
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->pidy_pracownikow[id_sektora] = 0;
         shmdt(stan_hali);
@@ -47,6 +42,8 @@ void handler_odblokowanie(int sig) {
     (void)sig;
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 0;
+        struct sembuf sig_odblok = {SEM_SEKTOR(id_sektora), 100, 0};
+        semop(sem_id, &sig_odblok, 1);
         pthread_cond_broadcast(&cond_sektor);
         const char *msg = "[ODBLOKOWANIE] SEKTOR ODBLOKOWANY\n";
         write(STDOUT_FILENO, msg, strlen(msg));
@@ -57,6 +54,13 @@ void handler_ewakuacja(int sig) {
     (void)sig;
     const char *msg = "[EWAKUACJA] Otwieram bramki awaryjne.\n";
     write(STDOUT_FILENO, msg, strlen(msg));
+    praca_trwa = 0;
+    pthread_cond_broadcast(&cond_sektor);
+}
+
+void handler_term(int sig) {
+    (void)sig;
+    praca_trwa = 0;
     pthread_cond_broadcast(&cond_sektor);
 }
 
@@ -69,7 +73,7 @@ void inicjalizuj() {
     shm_id = shmget(klucz_shm, sizeof(StanHali), 0600);
     SPRAWDZ(shm_id);
 
-    sem_id = semget(klucz_sem, 2, 0600);
+    sem_id = semget(klucz_sem, SEM_TOTAL, 0600);
     SPRAWDZ(sem_id);
 
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
@@ -96,6 +100,9 @@ void rejestruj_sygnaly() {
 
     sa.sa_handler = handler_ewakuacja;
     sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
+
+    sa.sa_handler = handler_term;
+    sigaction(SIGTERM, &sa, NULL);
 }
 
 void wyslij_zgloszenie_do_kierownika(int typ, const char *wiadomosc) {
@@ -202,6 +209,8 @@ void obsluz_stanowisko(int nr_stanowiska) {
                 rejestr_log("KONTROLA", "Sektor %d Stan %d: Zatrzymano PID %d - noz",
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
                 b->miejsca[i].zgoda_na_wejscie = 2;
+                struct sembuf sig_noz = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
+                semop(sem_id, &sig_noz, 1);
                 continue;
             }
 
@@ -214,6 +223,8 @@ void obsluz_stanowisko(int nr_stanowiska) {
                     rejestr_log("KONTROLA", "Sektor %d Stan %d: Zatrzymano PID %d - wiek %d bez opiekuna",
                                id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek);
                     b->miejsca[i].zgoda_na_wejscie = 3;
+                    struct sembuf sig_wiek = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
+                    semop(sem_id, &sig_wiek, 1);
                     continue;
                 }
             }
@@ -237,6 +248,8 @@ void obsluz_stanowisko(int nr_stanowiska) {
                 rejestr_log("KONTROLA", "Sektor %d Stan %d: Wpuszczono PID %d druzyna %c",
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
                            (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B');
+                struct sembuf sig_ok = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
+                semop(sem_id, &sig_ok, 1);
             } else {
                 printf("%sPracownik %d (Stanowisko %d): PID %d ma zla druzyne (%c zamiast %c) - wracaj do kolejki!%s\n",
                        KOLOR_ZOLTY,
@@ -247,6 +260,8 @@ void obsluz_stanowisko(int nr_stanowiska) {
                 rejestr_log("KONTROLA", "Sektor %d Stan %d: PID %d zla druzyna - przepuszczony",
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
                 b->miejsca[i].zgoda_na_wejscie = 4;
+                struct sembuf sig_zla = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
+                semop(sem_id, &sig_zla, 1);
             }
         }
     }
@@ -271,26 +286,31 @@ void* watek_stanowiska(void *arg) {
         if (!praca_trwa) break;
         
         if (stan_hali->ewakuacja_trwa) {
-            usleep(500000);
-            continue;
+            break;
         }
-        
+
+        struct sembuf wait_praca = {SEM_PRACA(id_sektora), -1, 0};
+        if (semop(sem_id, &wait_praca, 1) == -1) {
+            if (errno == EINTR) continue;
+            break;
+        }
+
+        if (!praca_trwa || stan_hali->ewakuacja_trwa) break;
+
         struct sembuf operacje[1];
         operacje[0].sem_num = 0;
         operacje[0].sem_op = -1;
         operacje[0].sem_flg = 0;
-        
+
         if (semop(sem_id, operacje, 1) == -1) {
             if (errno == EINTR) continue;
             break;
         }
-        
+
         obsluz_stanowisko(nr_stanowiska);
         
         operacje[0].sem_op = 1;
         semop(sem_id, operacje, 1);
-        
-        usleep(200000);
     }
     
     printf("Pracownik %d: Watek stanowiska %d zakonczony\n", id_sektora, nr_stanowiska);
@@ -346,11 +366,12 @@ int main(int argc, char *argv[]) {
 
     uruchom_watki_stanowisk();
 
-    while (praca_trwa) {
-        if (stan_hali->ewakuacja_trwa) {
-            obsluguj_ewakuacje();
-        }
-        sleep(1);
+    for (int i = 0; i < 2; i++) {
+        pthread_join(watki_stanowisk[i], NULL);
+    }
+
+    if (stan_hali->ewakuacja_trwa) {
+        obsluguj_ewakuacje();
     }
 
     return 0;

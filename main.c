@@ -126,7 +126,7 @@ void inicjalizuj_zasoby() {
         stan_hali->kasa_aktywna[i] = (i < 2) ? 1 : 0;
     }
 
-    sem_id = semget(klucz_sem, 2, IPC_CREAT | 0600);
+    sem_id = semget(klucz_sem, SEM_TOTAL, IPC_CREAT | 0600);
     SPRAWDZ(sem_id);
 
     if (semctl(sem_id, 0, SETVAL, 1) == -1) {
@@ -136,6 +136,12 @@ void inicjalizuj_zasoby() {
     if (semctl(sem_id, 1, SETVAL, 1) == -1) {
         perror("semctl init 1");
         exit(EXIT_FAILURE);
+    }
+    for (int i = 2; i < SEM_TOTAL; i++) {
+        if (semctl(sem_id, i, SETVAL, 0) == -1) {
+            perror("semctl init notification sem");
+            exit(EXIT_FAILURE);
+        }
     }
 
     msg_id = msgget(klucz_msg, IPC_CREAT | 0600);
@@ -332,7 +338,6 @@ int main(int argc, char *argv[]) {
 
     uruchom_kasjerow();
     uruchom_pracownikow();
-    sleep(1);
 
     printf("\nMAIN: System gotowy. Generowanie kibicow...\n");
     printf("(Nacisnij Ctrl+C aby zakonczyc)\n\n");
@@ -361,6 +366,8 @@ int main(int argc, char *argv[]) {
             time_t czas_meczu = teraz - czas_rozpoczecia_meczu;
             if (czas_meczu >= stan_hali->czas_trwania_meczu) {
                 stan_hali->faza_meczu = FAZA_PO_MECZU;
+                struct sembuf sig_faza = {SEM_FAZA_MECZU, 10000, 0};
+                semop(sem_id, &sig_faza, 1);
                 printf("\n%s", KOLOR_BOLD);
                 printf("+===============================================+\n");
                 printf("|          MECZ ZAKONCZONY!                     |\n");
