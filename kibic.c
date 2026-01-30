@@ -132,12 +132,13 @@ int czekaj_na_partnera() {
     for (int i = 0; i < 100; i++) {
         if (stan_hali->ewakuacja_trwa) return 0;
         struct sembuf wait_rodz = {SEM_RODZINA(id_rodziny), -1, 0};
-        if (semop(sem_id, &wait_rodz, 1) == 0) {
-            if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
-                return 1;
-            }
+        if (semop(sem_id, &wait_rodz, 1) == -1) {
+            if (errno == EINTR) continue;
+            break;
         }
-        if (errno == EINTR) continue;
+        if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
+            return 1;
+        }
     }
     return 0;
 }
@@ -612,6 +613,8 @@ void idz_do_bramki() {
 }
 
 int main(int argc, char *argv[]) {
+    setlinebuf(stdout);
+
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand((unsigned int)(ts.tv_nsec ^ getpid()));
@@ -716,7 +719,7 @@ int main(int argc, char *argv[]) {
             }
         }
     } else {
-        moj_wiek = (rand() % 60) + 5;
+        moj_wiek = (rand() % 47) + 18;
         if (jestem_vip) {
             liczba_biletow = 1;
         } else {

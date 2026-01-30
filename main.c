@@ -413,6 +413,9 @@ int main(int argc, char *argv[]) {
                     semop(sem_id, &wake_kasa, 1);
                 }
 
+                struct sembuf wake_mutex = {0, 20, 0};
+                semop(sem_id, &wake_mutex, 1);
+
                 while (wait(NULL) > 0);
                 sprzataj_zasoby();
                 printf("MAIN: Symulacja zakonczona pomyslnie.\n");
