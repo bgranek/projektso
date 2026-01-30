@@ -435,6 +435,8 @@ void idz_do_bramki() {
                     b->miejsca[i].pid_kibica = getpid();
                     moje_miejsce = i;
                     przepuszczeni = 0;
+                    struct sembuf sig_praca = {SEM_PRACA(numer_sektora), 1, 0};
+                    semop(sem_id, &sig_praca, 1);
                     break;
                 }
             }
@@ -459,6 +461,11 @@ void idz_do_bramki() {
         semop(sem_id, operacje, 1);
 
         if (moje_miejsce == -1 && !proba_vip) {
+            struct sembuf wait_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), -1, 0};
+            if (semop(sem_id, &wait_bramka, 1) == -1) {
+                if (errno == EINTR) continue;
+                return;
+            }
         }
     }
 
@@ -494,6 +501,8 @@ void idz_do_bramki() {
                        .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
                 op.sem_op = 1;
                 semop(sem_id, &op, 1);
+                struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
+                semop(sem_id, &sig_bramka, 1);
                 return;
             } else if (zgoda == 3) {
                 printf("%sKibic %d: Zawrocony - za mlody bez opiekuna!%s\n",
@@ -505,6 +514,8 @@ void idz_do_bramki() {
                        .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
                 op.sem_op = 1;
                 semop(sem_id, &op, 1);
+                struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
+                semop(sem_id, &sig_bramka, 1);
                 return;
             } else if (zgoda == 4) {
                 printf("%sKibic %d: Przepuszczony - zla druzyna, wracam do kolejki%s\n",
@@ -516,6 +527,8 @@ void idz_do_bramki() {
                        .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
                 op.sem_op = 1;
                 semop(sem_id, &op, 1);
+                struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
+                semop(sem_id, &sig_bramka, 1);
                 przepuszczeni++;
                 if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
                     printf("%sKibic %d: FRUSTRACJA po przepuszczeniu! Wpycham sie!%s\n",
@@ -537,6 +550,8 @@ void idz_do_bramki() {
                    .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
             op.sem_op = 1;
             semop(sem_id, &op, 1);
+            struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
+            semop(sem_id, &sig_bramka, 1);
         }
     }
     }

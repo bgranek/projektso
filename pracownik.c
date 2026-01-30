@@ -346,6 +346,8 @@ int main(int argc, char *argv[]) {
 
     id_sektora = parsuj_int(argv[1], "numer sektora", 0, LICZBA_SEKTOROW - 1);
 
+    setlinebuf(stdout);
+
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand((unsigned int)(ts.tv_nsec ^ getpid()));

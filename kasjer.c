@@ -260,6 +260,16 @@ int main(int argc, char *argv[]) {
         }
 
         aktualizuj_status();
+
+        if (!stan_hali->kasa_aktywna[id_kasjera]) {
+            struct sembuf wait_kasa = {SEM_KASA(id_kasjera), -1, 0};
+            if (semop(sem_id, &wait_kasa, 1) == -1) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            continue;
+        }
+
         obsluz_klienta();
     }
 

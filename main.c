@@ -283,6 +283,8 @@ void wyswietl_pomoc(const char *nazwa_programu) {
 }
 
 int main(int argc, char *argv[]) {
+    setlinebuf(stdout);
+
     int opt;
     while ((opt = getopt(argc, argv, "k:t:d:h")) != -1) {
         switch (opt) {
@@ -400,6 +402,17 @@ int main(int argc, char *argv[]) {
                 rejestr_log("MAIN", "Koniec symulacji po zakonczeniu meczu");
                 signal(SIGTERM, SIG_IGN);
                 kill(0, SIGTERM);
+
+                for (int s = 0; s < LICZBA_SEKTOROW; s++) {
+                    struct sembuf wake_workers = {SEM_PRACA(s), 10, 0};
+                    semop(sem_id, &wake_workers, 1);
+                }
+
+                for (int k = 0; k < LICZBA_KAS; k++) {
+                    struct sembuf wake_kasa = {SEM_KASA(k), 10, 0};
+                    semop(sem_id, &wake_kasa, 1);
+                }
+
                 while (wait(NULL) > 0);
                 sprzataj_zasoby();
                 printf("MAIN: Symulacja zakonczona pomyslnie.\n");
@@ -428,6 +441,11 @@ int main(int argc, char *argv[]) {
             perror("fork kibic");
         }
         usleep((rand() % 100000) + 25000);
+
+        for (int k = 0; k < LICZBA_KAS; k++) {
+            struct sembuf wake_kasa = {SEM_KASA(k), 1, 0};
+            semop(sem_id, &wake_kasa, 1);
+        }
     }
 
     return 0;
