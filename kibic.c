@@ -23,10 +23,16 @@ int id_rodziny = -1;
 
 volatile sig_atomic_t ewakuacja_mnie = 0;
 int jestem_w_hali = 0;
+int moja_kasa = -1;
 
 void handler_ewakuacja(int sig) {
     (void)sig;
     ewakuacja_mnie = 1;
+}
+
+void handler_term(int sig) {
+    (void)sig;
+    _exit(0);
 }
 
 void ewakuuj_sie() {
@@ -52,6 +58,9 @@ void ewakuuj_sie() {
 
     op.sem_op = 1;
     semop(sem_id, &op, 1);
+
+    struct sembuf sig_wyszedl = {SEM_KIBIC_WYSZEDL, 1, 0};
+    semop(sem_id, &sig_wyszedl, 1);
 
     jestem_w_hali = 0;
     printf("%sKibic %d: Ewakuowalem sie z hali.%s\n",
@@ -172,6 +181,12 @@ void inicjalizuj() {
     sa.sa_handler = handler_ewakuacja;
     sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
 
+    struct sigaction sa_term;
+    sigemptyset(&sa_term.sa_mask);
+    sa_term.sa_flags = 0;
+    sa_term.sa_handler = handler_term;
+    sigaction(SIGTERM, &sa_term, NULL);
+
     rejestr_init(NULL, 0);
 }
 
@@ -222,14 +237,21 @@ void aktualizuj_kolejke(int zmiana) {
         }
         if (wybrana_kasa != -1) {
             stan_hali->kolejka_dlugosc[wybrana_kasa]++;
+            moja_kasa = wybrana_kasa;
         }
     } else {
-        for (int i = 0; i < LICZBA_KAS; i++) {
-             if (stan_hali->kolejka_dlugosc[i] > 0) {
-                 stan_hali->kolejka_dlugosc[i]--;
-                 break;
-             }
+        if (moja_kasa >= 0 && moja_kasa < LICZBA_KAS &&
+            stan_hali->kolejka_dlugosc[moja_kasa] > 0) {
+            stan_hali->kolejka_dlugosc[moja_kasa]--;
+        } else {
+            for (int i = 0; i < LICZBA_KAS; i++) {
+                 if (stan_hali->kolejka_dlugosc[i] > 0) {
+                     stan_hali->kolejka_dlugosc[i]--;
+                     break;
+                 }
+            }
         }
+        moja_kasa = -1;
     }
 
     operacje[0].sem_op = 1;
@@ -369,6 +391,9 @@ void idz_do_bramki() {
         stan_hali->liczba_vip--;
         op.sem_op = 1;
         semop(sem_id, &op, 1);
+
+        struct sembuf sig_wyszedl = {SEM_KIBIC_WYSZEDL, 1, 0};
+        semop(sem_id, &sig_wyszedl, 1);
 
         jestem_w_hali = 0;
         printf("Kibic %d: Wychodze z hali.\n", getpid());
@@ -539,6 +564,19 @@ void idz_do_bramki() {
                 }
                 retry_bramka = 1;
                 break;
+            } else if (zgoda == 5) {
+                printf("%sKibic %d: Mecz zakonczony - nie moge wejsc.%s\n",
+                       KOLOR_ZOLTY, getpid(), KOLOR_RESET);
+                rejestr_log("KIBIC", "PID %d odrzucony - mecz zakonczony", getpid());
+                struct sembuf op = {0, -1, 0};
+                semop(sem_id, &op, 1);
+                memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
+                       .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
+                op.sem_op = 1;
+                semop(sem_id, &op, 1);
+                struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
+                semop(sem_id, &sig_bramka, 1);
+                return;
             } else if (zgoda == 1) {
                 break;
             }
@@ -606,6 +644,9 @@ void idz_do_bramki() {
     }
     op.sem_op = 1;
     semop(sem_id, &op, 1);
+
+    struct sembuf sig_wyszedl = {SEM_KIBIC_WYSZEDL, 1, 0};
+    semop(sem_id, &sig_wyszedl, 1);
 
     jestem_w_hali = 0;
     printf("Kibic %d: Wychodze z hali.\n", getpid());

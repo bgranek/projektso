@@ -201,6 +201,13 @@ void obsluz_stanowisko(int nr_stanowiska) {
 
     for (int i = 0; i < 3; i++) {
         if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
+            if (stan_hali->faza_meczu == FAZA_PO_MECZU) {
+                b->miejsca[i].zgoda_na_wejscie = 5;
+                struct sembuf sig = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
+                semop(sem_id, &sig, 1);
+                continue;
+            }
+
             if (b->miejsca[i].ma_przedmiot) {
                 printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Posiada noz!%s\n",
                        KOLOR_CZERWONY,

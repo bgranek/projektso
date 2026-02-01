@@ -384,8 +384,16 @@ int main(int argc, char *argv[]) {
                 while (stan_hali->suma_kibicow_w_hali > 0 && timeout_wyjscia > 0) {
                     printf("MAIN: Pozostalo kibicow: %d (timeout: %ds)\n",
                            stan_hali->suma_kibicow_w_hali, timeout_wyjscia);
-                    sleep(1);
-                    timeout_wyjscia--;
+                    struct sembuf wait_wyjscie = {SEM_KIBIC_WYSZEDL, -1, 0};
+                    struct timespec ts = {1, 0};
+                    if (semtimedop(sem_id, &wait_wyjscie, 1, &ts) == -1) {
+                        if (errno == EAGAIN) {
+                            timeout_wyjscia--;
+                            continue;
+                        }
+                        if (errno == EINTR) continue;
+                        break;
+                    }
                 }
 
                 if (stan_hali->suma_kibicow_w_hali > 0) {
@@ -426,12 +434,16 @@ int main(int argc, char *argv[]) {
         if (stan_hali->ewakuacja_trwa) {
             printf("MAIN: Ewakuacja w toku - wstrzymano generowanie kibicow.\n");
             rejestr_log("MAIN", "Ewakuacja - wstrzymano generowanie kibicow");
-            sleep(2);
+            struct sembuf wait_ewak = {SEM_EWAKUACJA_KONIEC, -1, 0};
+            struct timespec ts = {2, 0};
+            semtimedop(sem_id, &wait_ewak, 1, &ts);
             continue;
         }
 
         if (stan_hali->wszystkie_bilety_sprzedane) {
-            sleep(1);
+            struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
+            struct timespec ts = {1, 0};
+            semtimedop(sem_id, &wait_faza, 1, &ts);
             continue;
         }
 

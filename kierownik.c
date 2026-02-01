@@ -1,6 +1,7 @@
 #include "common.h"
 
 int shm_id = -1;
+int sem_id = -1;
 int fifo_fd = -1;
 StanHali *stan_hali = NULL;
 
@@ -23,9 +24,14 @@ void obsluga_sigint(int sig) {
 void inicjalizuj() {
     key_t klucz_shm = ftok(".", KLUCZ_SHM);
     SPRAWDZ(klucz_shm);
+    key_t klucz_sem = ftok(".", KLUCZ_SEM);
+    SPRAWDZ(klucz_sem);
 
     shm_id = shmget(klucz_shm, sizeof(StanHali), 0600);
     SPRAWDZ(shm_id);
+
+    sem_id = semget(klucz_sem, SEM_TOTAL, 0600);
+    SPRAWDZ(sem_id);
 
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
     if (stan_hali == (void*)-1) {
@@ -78,6 +84,9 @@ void sprawdz_zgloszenia_fifo() {
                     printf("%s[INFO] WSZYSTKIE SEKTORY EWAKUOWANE! Hala pusta.%s\n",
                            KOLOR_ZIELONY, KOLOR_RESET);
                     rejestr_log("KIEROWNIK", "Wszystkie sektory ewakuowane - hala pusta");
+                    stan_hali->ewakuacja_trwa = 0;
+                    struct sembuf sig_ewak = {SEM_EWAKUACJA_KONIEC, 1, 0};
+                    semop(sem_id, &sig_ewak, 1);
                 }
             }
         }

@@ -64,13 +64,20 @@ int sprawdz_czy_wyprzedane() {
 }
 
 void aktualizuj_status() {
+    struct sembuf lock = {0, -1, 0};
+    struct sembuf unlock = {0, 1, 0};
+
+    if (semop(sem_id, &lock, 1) == -1) return;
+
     if (stan_hali->wszystkie_bilety_sprzedane) {
         stan_hali->kasa_aktywna[id_kasjera] = 0;
+        semop(sem_id, &unlock, 1);
         return;
     }
 
     if (id_kasjera < 2) {
         stan_hali->kasa_aktywna[id_kasjera] = 1;
+        semop(sem_id, &unlock, 1);
         return;
     }
 
@@ -83,7 +90,7 @@ void aktualizuj_status() {
     }
 
     int limit = stan_hali->pojemnosc_calkowita / 10;
-    int potrzebne = (K / limit) + 1;
+    int potrzebne = K / limit;
 
     if (potrzebne < 2) potrzebne = 2;
     if (potrzebne > LICZBA_KAS) potrzebne = LICZBA_KAS;
@@ -101,6 +108,8 @@ void aktualizuj_status() {
                    id_kasjera,
                    stan_hali->kasa_aktywna[id_kasjera] ? "AKTYWNA" : "NIEAKTYWNA");
     }
+
+    semop(sem_id, &unlock, 1);
 }
 
 void obsluz_klienta() {

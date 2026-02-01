@@ -57,7 +57,9 @@
 #define SEM_PRACA_BASE 109
 #define SEM_BRAMKA_BASE 117
 #define SEM_KASA_BASE 133
-#define SEM_TOTAL 143
+#define SEM_KIBIC_WYSZEDL 143
+#define SEM_EWAKUACJA_KONIEC 144
+#define SEM_TOTAL 145
 
 #define SEM_SLOT(s,st,m) (SEM_SLOT_BASE + (s)*6 + (st)*3 + (m))
 #define SEM_SEKTOR(s) (SEM_SEKTOR_BASE + (s))
