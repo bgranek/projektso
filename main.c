@@ -1,18 +1,31 @@
+/*
+ * MAIN.C - Proces glowny symulatora hali widowiskowo-sportowej
+ *
+ * Odpowiedzialnosci:
+ * - Inicjalizacja wszystkich zasobow IPC (pamiec dzielona, semafory, kolejki, FIFO)
+ * - Uruchamianie procesow potomnych (kasjerzy, pracownicy, kibice)
+ * - Zarzadzanie fazami meczu (przed, w trakcie, po)
+ * - Serwer socket do monitoringu zewnetrznego
+ * - Sprzatanie zasobow po zakonczeniu symulacji
+ */
+
 #include "common.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-int shm_id = -1;
-int sem_id = -1;
-int msg_id = -1;
-StanHali *stan_hali = NULL;
-int pojemnosc_K = POJEMNOSC_DOMYSLNA;
-int czas_do_meczu = CZAS_DO_MECZU_DOMYSLNY;
-int czas_trwania_meczu = CZAS_TRWANIA_MECZU_DOMYSLNY;
-volatile sig_atomic_t main_dziala = 1;
-volatile sig_atomic_t shutdown_request = 0;
+/* === ZMIENNE GLOBALNE === */
+int shm_id = -1;                // ID segmentu pamieci dzielonej
+int sem_id = -1;                // ID zestawu semaforow
+int msg_id = -1;                // ID kolejki komunikatow
+StanHali *stan_hali = NULL;     // Wskaznik na pamiec dzielona ze stanem hali
+int pojemnosc_K = POJEMNOSC_DOMYSLNA;           // Pojemnosc hali (argument -k)
+int czas_do_meczu = CZAS_DO_MECZU_DOMYSLNY;     // Sekundy do startu meczu (argument -t)
+int czas_trwania_meczu = CZAS_TRWANIA_MECZU_DOMYSLNY;  // Czas trwania meczu (argument -d)
+volatile sig_atomic_t main_dziala = 1;      // Flaga glownej petli (0 = koniec)
+volatile sig_atomic_t shutdown_request = 0; // Flaga zadania zamkniecia
 
+/* Usuwa lacz nazwane FIFO z systemu plikow */
 void usun_fifo() {
     if (unlink(FIFO_PRACOWNIK_KIEROWNIK) == -1) {
         if (errno != ENOENT) {
@@ -21,6 +34,10 @@ void usun_fifo() {
     }
 }
 
+/*
+ * Sprzatanie wszystkich zasobow IPC po zakonczeniu symulacji.
+ * Wywolywane przy normalnym zakonczeniu lub przez atexit().
+ */
 void sprzataj_zasoby() {
     rejestr_log("MAIN", "Rozpoczynam sprzatanie zasobow");
 
@@ -63,14 +80,16 @@ void sprzataj_zasoby() {
     rejestr_zamknij();
 }
 
+/* Handler SIGINT/SIGTERM - ustawia flagi zamkniecia */
 void obsluga_sygnalow(int sig) {
     (void)sig;
     shutdown_request = 1;
     main_dziala = 0;
 }
 
+/* Tworzy lacze FIFO do komunikacji pracownik -> kierownik */
 void utworz_fifo() {
-    unlink(FIFO_PRACOWNIK_KIEROWNIK);
+    unlink(FIFO_PRACOWNIK_KIEROWNIK);  // Usun stare FIFO jesli istnieje
 
     if (mkfifo(FIFO_PRACOWNIK_KIEROWNIK, 0600) == -1) {
         if (errno != EEXIST) {
@@ -82,7 +101,14 @@ void utworz_fifo() {
     rejestr_log("MAIN", "Utworzono FIFO: %s", FIFO_PRACOWNIK_KIEROWNIK);
 }
 
+/*
+ * Inicjalizacja wszystkich zasobow IPC:
+ * - Pamiec dzielona (StanHali)
+ * - Semafory (146 semaforow)
+ * - Kolejka komunikatow (kibic <-> kasjer)
+ */
 void inicjalizuj_zasoby() {
+    // Generowanie kluczy IPC na podstawie biezacego katalogu
     key_t klucz_shm = ftok(".", KLUCZ_SHM);
     SPRAWDZ(klucz_shm);
     key_t klucz_sem = ftok(".", KLUCZ_SEM);
@@ -90,6 +116,7 @@ void inicjalizuj_zasoby() {
     key_t klucz_msg = ftok(".", KLUCZ_MSG);
     SPRAWDZ(klucz_msg);
 
+    // Tworzenie pamieci dzielonej (usun stara jesli istnieje)
     shm_id = shmget(klucz_shm, sizeof(StanHali), IPC_CREAT | IPC_EXCL | 0600);
     if (shm_id == -1 && errno == EEXIST) {
         int stary = shmget(klucz_shm, sizeof(StanHali), 0600);
@@ -102,6 +129,7 @@ void inicjalizuj_zasoby() {
     }
     SPRAWDZ(shm_id);
 
+    // Dolaczenie pamieci dzielonej do przestrzeni adresowej procesu
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
     if (stan_hali == (void*)-1) {
         perror("shmat");
@@ -110,9 +138,10 @@ void inicjalizuj_zasoby() {
 
     memset(stan_hali, 0, sizeof(StanHali));
 
+    // Inicjalizacja parametrow hali
     stan_hali->pojemnosc_calkowita = pojemnosc_K;
-    stan_hali->pojemnosc_sektora = pojemnosc_K / LICZBA_SEKTOROW;
-    stan_hali->limit_vip = (pojemnosc_K * 3) / 1000;
+    stan_hali->pojemnosc_sektora = pojemnosc_K / LICZBA_SEKTOROW;  // K/8
+    stan_hali->limit_vip = (pojemnosc_K * 3) / 1000;  // 0.3% * K
     stan_hali->pojemnosc_vip = stan_hali->limit_vip;
 
     stan_hali->pid_main = getpid();
@@ -140,12 +169,14 @@ void inicjalizuj_zasoby() {
     rejestr_log("MAIN", "Czas do meczu: %d s, czas trwania: %d s",
                 stan_hali->czas_do_meczu, stan_hali->czas_trwania_meczu);
 
+    // Inicjalizacja kas - domyslnie 2 aktywne (minimum wg wymagan)
     stan_hali->aktywne_kasy = 2;
     for (int i = 0; i < LICZBA_KAS; i++) {
         stan_hali->kasa_aktywna[i] = (i < stan_hali->aktywne_kasy) ? 1 : 0;
         stan_hali->kasa_zamykanie[i] = 0;
     }
 
+    // Tworzenie zestawu semaforow (146 semaforow)
     sem_id = semget(klucz_sem, SEM_TOTAL, IPC_CREAT | IPC_EXCL | 0600);
     if (sem_id == -1 && errno == EEXIST) {
         int stary = semget(klucz_sem, 0, 0600);
@@ -158,6 +189,10 @@ void inicjalizuj_zasoby() {
     }
     SPRAWDZ(sem_id);
 
+    // Inicjalizacja semaforow:
+    // sem[0] = mutex glowny (wartosc 1)
+    // sem[1] = mutex pomocniczy (wartosc 1)
+    // sem[2..145] = semafory notyfikacyjne (wartosc 0)
     if (semctl(sem_id, 0, SETVAL, 1) == -1) {
         perror("semctl init 0");
         exit(EXIT_FAILURE);
@@ -173,11 +208,13 @@ void inicjalizuj_zasoby() {
         }
     }
 
+    // SEM_START_MECZU = 1 oznacza "mecz jeszcze nie trwa" (kibice czekaja na 0)
     if (semctl(sem_id, SEM_START_MECZU, SETVAL, 1) == -1) {
         perror("semctl init start meczu");
         exit(EXIT_FAILURE);
     }
 
+    // Tworzenie kolejki komunikatow do sprzedazy biletow
     msg_id = msgget(klucz_msg, IPC_CREAT | IPC_EXCL | 0600);
     if (msg_id == -1 && errno == EEXIST) {
         int stary = msgget(klucz_msg, 0600);
@@ -195,6 +232,10 @@ void inicjalizuj_zasoby() {
     rejestr_log("MAIN", "Zasoby IPC zainicjalizowane");
 }
 
+/*
+ * Konczy symulacje: wysyla SIGTERM do wszystkich procesow,
+ * budzi zablokowane procesy przez semafory, czeka na zakonczenie.
+ */
 static void zakoncz_symulacje(const char *powod) {
     if (powod != NULL) {
         printf("MAIN: %s\n", powod);
@@ -239,6 +280,7 @@ static void zakoncz_symulacje(const char *powod) {
     exit(0);
 }
 
+/* Sleep odporny na EINTR - wznawia po przerwaniu sygnalem */
 static void sleep_cale(int sekundy) {
     struct timespec ts;
     ts.tv_sec = sekundy;
@@ -252,10 +294,18 @@ static void sleep_cale(int sekundy) {
     }
 }
 
+/*
+ * WATEK ZARZADZANIA FAZAMI MECZU
+ *
+ * Odpowiedzialnosci:
+ * - Czeka czas_do_meczu sekund, potem zmienia faze na MECZ
+ * - Czeka czas_trwania_meczu sekund, potem zmienia faze na PO_MECZU
+ * - Budzi wszystkich kibicow czekajacych na SEM_FAZA_MECZU
+ */
 void* watek_czasu_meczu(void *arg) {
     (void)arg;
 
-    sleep_cale(stan_hali->czas_do_meczu);
+    sleep_cale(stan_hali->czas_do_meczu);  // Czekanie na start meczu
     if (!main_dziala) return NULL;
 
     struct sembuf lock = {0, -1, 0};
@@ -320,6 +370,19 @@ void* watek_czasu_meczu(void *arg) {
     return NULL;
 }
 
+/*
+ * WATEK GENERATORA KIBICOW
+ *
+ * Zalozenia:
+ * - Generuje nowych kibicow w losowych odstepach czasu (25-125 ms)
+ * - Kazdy kibic to osobny proces utworzony przez fork()+execl()
+ * - Zatrzymuje generowanie podczas ewakuacji (czeka na SEM_EWAKUACJA_KONIEC)
+ * - Konczy prace gdy faza meczu zmieni sie na PO_MECZU
+ *
+ * Dlaczego fork()+exec() a nie tylko fork():
+ * - Wymaganie projektu: unikanie rozwiazan scentralizowanych
+ * - Kazdy kibic dziala jako niezalezny proces
+ */
 void* watek_generator_kibicow(void *arg) {
     (void)arg;
     unsigned int seed = (unsigned int)time(NULL) ^ (unsigned int)getpid();
@@ -327,6 +390,7 @@ void* watek_generator_kibicow(void *arg) {
     while (main_dziala) {
         if (stan_hali->faza_meczu == FAZA_PO_MECZU) break;
 
+        // Podczas ewakuacji wstrzymaj generowanie nowych kibicow
         if (stan_hali->ewakuacja_trwa) {
             struct sembuf wait_ewak = {SEM_EWAKUACJA_KONIEC, -1, 0};
             if (semop(sem_id, &wait_ewak, 1) == -1) {
@@ -337,6 +401,7 @@ void* watek_generator_kibicow(void *arg) {
             continue;
         }
 
+        // Utworzenie nowego procesu kibica
         pid_t pid = fork();
         if (pid == 0) {
             execl("./kibic", "kibic", NULL);
@@ -346,10 +411,11 @@ void* watek_generator_kibicow(void *arg) {
             perror("fork kibic");
         }
 
+        // Losowe opoznienie miedzy kolejnymi kibicami (25-125 ms)
         int opoznienie = (rand_r(&seed) % 100000) + 25000;
         struct timespec ts;
         ts.tv_sec = 0;
-        ts.tv_nsec = opoznienie * 1000;
+        ts.tv_nsec = opoznienie * 1000;  // Konwersja mikro -> nano
         while (nanosleep(&ts, &ts) == -1) {
             if (errno != EINTR) {
                 perror("nanosleep");
@@ -361,29 +427,42 @@ void* watek_generator_kibicow(void *arg) {
     return NULL;
 }
 
+/*
+ * WATEK SERWERA SOCKET (MONITORING)
+ *
+ * Umozliwia zewnetrzny monitoring stanu hali przez TCP.
+ * Po polaczeniu na port 9999 odsyla tekstowy status:
+ * HALA|OSOB_W_HALI:X|SUMA_BILETOW:Y|...|S0:X/Y|...|VIP:X/Y
+ *
+ * Uzycie: ./monitor localhost 9999
+ */
 void* watek_serwera_socket(void *arg) {
     (void)arg;
 
+    // Utworzenie gniazda TCP
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == -1) {
         perror("socket");
         return NULL;
     }
 
+    // FD_CLOEXEC - zamknij socket przy exec() (nie dziedziczyc przez dzieci)
     if (fcntl(server_fd, F_SETFD, FD_CLOEXEC) == -1) {
         perror("fcntl server");
     }
 
+    // SO_REUSEADDR - pozwol na ponowne uzycie portu po restarcie
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
         perror("setsockopt");
     }
 
+    // Konfiguracja adresu nasluchu
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(SOCKET_MONITOR_PORT);
+    addr.sin_addr.s_addr = INADDR_ANY;  // Nasluchuj na wszystkich interfejsach
+    addr.sin_port = htons(SOCKET_MONITOR_PORT);  // Port 9999
 
     if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
         perror("bind");
@@ -458,12 +537,13 @@ void* watek_serwera_socket(void *arg) {
     return NULL;
 }
 
+/* Uruchamia 10 procesow kasjerow (fork+exec) */
 void uruchom_kasjerow() {
     for (int i = 0; i < LICZBA_KAS; i++) {
         pid_t pid = fork();
         if (pid == 0) {
             char bufor[10];
-            snprintf(bufor, sizeof(bufor), "%d", i);
+            snprintf(bufor, sizeof(bufor), "%d", i);  // Przekazanie numeru kasy
             execl("./kasjer", "kasjer", bufor, NULL);
             perror("execl kasjer");
             exit(EXIT_FAILURE);
@@ -475,12 +555,13 @@ void uruchom_kasjerow() {
     rejestr_log("MAIN", "Uruchomiono %d kasjerow", LICZBA_KAS);
 }
 
+/* Uruchamia 8 procesow pracownikow (po jednym na sektor) */
 void uruchom_pracownikow() {
     for (int i = 0; i < LICZBA_SEKTOROW; i++) {
         pid_t pid = fork();
         if (pid == 0) {
             char bufor[10];
-            snprintf(bufor, sizeof(bufor), "%d", i);
+            snprintf(bufor, sizeof(bufor), "%d", i);  // Przekazanie numeru sektora
             execl("./pracownik", "pracownik", bufor, NULL);
             perror("execl pracownik");
             exit(EXIT_FAILURE);
