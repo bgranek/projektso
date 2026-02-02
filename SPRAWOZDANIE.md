@@ -1,0 +1,897 @@
+# Sprawozdanie z projektu: Symulator Hali Widowiskowo-Sportowej
+
+**Temat:** 18 - Hala widowiskowo-sportowa
+**Przedmiot:** Systemy Operacyjne
+**Język programowania:** C
+
+---
+
+## 1. Cel projektu
+
+Celem projektu jest stworzenie symulatora hali widowiskowo-sportowej, w której odbywa się mecz finałowy siatkówki. Symulacja obejmuje:
+
+- Obsługę kibiców przybywających na halę (kupowanie biletów, kontrola bezpieczeństwa, zajmowanie miejsc)
+- Dynamiczne zarządzanie kasami biletowymi (otwieranie/zamykanie w zależności od liczby kibiców w kolejce)
+- Kontrolę bezpieczeństwa przy wejściach do sektorów (wykrywanie przedmiotów niebezpiecznych, separacja drużyn)
+- Obsługę sygnałów od kierownika (blokada sektora, odblokowanie, ewakuacja)
+- Rejestrowanie przebiegu symulacji w pliku logów
+
+Projekt demonstruje praktyczne zastosowanie mechanizmów IPC (Inter-Process Communication) systemu UNIX/Linux: pamięci współdzielonej, semaforów System V, kolejek komunikatów, łącz nazwanych (FIFO) oraz gniazd sieciowych.
+
+---
+
+## 2. Założenia projektowe
+
+### 2.1 Parametry hali
+
+| Parametr | Wartość | Opis |
+|----------|---------|------|
+| Pojemność K | 80 - 100000 | Całkowita pojemność hali (podzielna przez 8) |
+| Sektory zwykłe | 8 | Każdy o pojemności K/8 |
+| Sektor VIP | 1 | Pojemność < 0.3% * K |
+| Kasy | 10 | Dynamicznie aktywowane (min. 2 zawsze czynne) |
+| Stanowiska kontroli | 2 na sektor | Max 3 osoby jednocześnie na stanowisku |
+
+### 2.2 Zasady działania kas
+
+- Zawsze działają minimum 2 stanowiska kasowe
+- Na każdych K/10 kibiców w kolejce przypada minimum 1 czynne stanowisko
+- Kasa zamykana gdy kolejka < (K/10)*(N-1), gdzie N to liczba czynnych kas
+- Jeden kibic może kupić maksymalnie 2 bilety w tym samym sektorze
+- Osoby VIP kupują bilet omijając kolejkę
+
+### 2.3 Zasady kontroli bezpieczeństwa
+
+- Do każdego z 8 sektorów osobne wejście z 2 stanowiskami kontroli
+- Max 3 osoby na stanowisku kontroli jednocześnie
+- Jeśli >1 osoba na stanowisku - muszą być kibicami tej samej drużyny
+- Kibic może przepuścić max 5 innych kibiców (potem frustracja)
+- VIP wchodzą osobnym wejściem bez kontroli
+- Dzieci <15 lat wchodzą pod opieką osoby dorosłej
+
+### 2.4 Sygnały kierownika
+
+| Sygnał | Akcja |
+|--------|-------|
+| SIGRTMIN+1 | Blokada wejścia do sektora |
+| SIGRTMIN+2 | Odblokowanie wejścia do sektora |
+| SIGRTMIN+3 | Ewakuacja całej hali |
+
+---
+
+## 3. Uruchomienie programu
+
+### 3.1 Kompilacja
+
+```bash
+make clean && make
+```
+
+### 3.2 Uruchomienie symulatora
+
+```bash
+./main [OPCJE]
+```
+
+### 3.3 Opcje uruchomienia
+
+| Opcja | Opis | Domyślnie | Zakres |
+|-------|------|-----------|--------|
+| `-k <liczba>` | Pojemność hali K | 1600 | 80 - 100000 (podzielne przez 8) |
+| `-t <sekundy>` | Czas do rozpoczęcia meczu | 30 | 10 - 3600 |
+| `-d <sekundy>` | Czas trwania meczu | 60 | 10 - 3600 |
+| `-h` | Wyświetl pomoc | - | - |
+
+### 3.4 Przykłady uruchomienia
+
+```bash
+./main                        # Domyślne parametry (K=1600, t=30s, d=60s)
+./main -k 800                 # Pojemność 800 kibiców
+./main -k 3200 -t 60 -d 120   # K=3200, mecz za 60s, trwa 120s
+```
+
+### 3.5 Uruchomienie kierownika (w osobnym terminalu)
+
+```bash
+./kierownik
+```
+
+### 3.6 Monitor zewnętrzny (opcjonalnie)
+
+```bash
+./monitor localhost 9999
+```
+
+---
+
+## 4. Opis plików źródłowych
+
+| Plik | Odpowiedzialność |
+|------|-----------------|
+| `main.c` | Proces główny - inicjalizacja zasobów IPC, uruchamianie procesów potomnych (kasjerzy, pracownicy, kibice), zarządzanie fazami meczu, serwer socket monitoringu |
+| `kierownik.c` | Program kierownika hali - interaktywny interfejs do wysyłania sygnałów (blokada/odblokowanie sektorów, ewakuacja), wyświetlanie statusu hali, odbieranie zgłoszeń przez FIFO |
+| `kasjer.c` | Proces kasjera - obsługa sprzedaży biletów, komunikacja z kibicami przez kolejki komunikatów, dynamiczna aktywacja/deaktywacja kas |
+| `pracownik.c` | Proces pracownika technicznego - kontrola bezpieczeństwa (2 wątki na 2 stanowiska), obsługa sygnałów od kierownika, wysyłanie zgłoszeń przez FIFO |
+| `kibic.c` | Proces kibica - kupowanie biletów, przechodzenie kontroli, oglądanie meczu, obsługa ewakuacji, obsługa rodzin (rodzic+dziecko) |
+| `monitor.c` | Zewnętrzny monitor - łączy się przez socket i wyświetla status hali |
+| `common.h` | Wspólne definicje - stałe, struktury danych, makra semaforów, struktury IPC |
+| `rejestr.h` | System logowania - zapis przebiegu symulacji do pliku tekstowego |
+| `Makefile` | Skrypt kompilacji |
+
+---
+
+## 5. Opis działania procesów
+
+### 5.1 Proces główny (main)
+
+1. Parsuje argumenty linii poleceń i waliduje parametry
+2. Tworzy zasoby IPC (pamięć współdzielona, semafory, kolejka komunikatów, FIFO)
+3. Inicjalizuje strukturę `StanHali` w pamięci współdzielonej
+4. Uruchamia wątek serwera socket do monitoringu
+5. Uruchamia wątek zarządzający fazami meczu (start, trwanie, koniec)
+6. Uruchamia procesy kasjerów (10) przez `fork()` + `execl()`
+7. Uruchamia procesy pracowników (8) przez `fork()` + `execl()`
+8. Generuje procesy kibiców w pętli (z limitowaniem aktywnych procesów)
+9. Po zakończeniu meczu czeka na wyjście wszystkich kibiców
+10. Sprząta zasoby IPC i kończy symulację
+
+### 5.2 Kierownik hali
+
+1. Łączy się z pamięcią współdzieloną i otwiera FIFO do odbioru zgłoszeń
+2. Uruchamia wątek nasłuchujący na FIFO (zgłoszenia o zakończeniu ewakuacji sektorów)
+3. Wyświetla interaktywne menu:
+   - Pokaż status hali (sektory, kasy, liczba kibiców)
+   - Zablokuj sektor (wysyła SIGRTMIN+1 do pracownika)
+   - Odblokuj sektor (wysyła SIGRTMIN+2 do pracownika)
+   - Zarządź ewakuację (wysyła SIGRTMIN+3 do wszystkich pracowników)
+
+### 5.3 Kasjer
+
+1. Łączy się z zasobami IPC
+2. Inicjalnie kasy 0 i 1 są aktywne, pozostałe czekają
+3. W pętli głównej:
+   - Aktualizuje status kasy (kasa 0 zarządza dynamiką wszystkich kas)
+   - Jeśli kasa nieaktywna - czeka na semaforze `SEM_KASA(id)`
+   - Odbiera komunikat od kibica z kolejki komunikatów
+   - Sprawdza dostępność miejsc w żądanym sektorze
+   - Wysyła odpowiedź z przydzielonym sektorem lub odmową
+4. Kończy gdy wszystkie bilety sprzedane lub symulacja zakończona
+
+### 5.4 Pracownik techniczny
+
+1. Łączy się z zasobami IPC
+2. Rejestruje swój PID w pamięci współdzielonej
+3. Uruchamia wątek obsługi sygnałów (sigwait):
+   - SIGRTMIN+1: ustawia blokadę sektora
+   - SIGRTMIN+2: usuwa blokadę sektora
+   - SIGRTMIN+3: inicjuje ewakuację
+4. Uruchamia 2 wątki stanowisk kontroli, każdy:
+   - Czeka na semaforze `SEM_PRACA(sektor)` na kibica
+   - Sprawdza czy kibic ma niebezpieczny przedmiot
+   - Sprawdza czy dziecko ma opiekuna
+   - Kontroluje zgodność drużyn na stanowisku
+   - Sygnalizuje kibicom zakończenie kontroli
+5. Po ewakuacji wysyła komunikat przez FIFO do kierownika
+
+### 5.5 Kibic
+
+Kibice dzielą się na kategorie:
+- **Zwykły** - kupuje 1-2 bilety, może mieć kolegę
+- **VIP** - omija kolejkę do kasy, osobne wejście
+- **Rodzic** - kupuje bilet i tworzy proces dziecka
+- **Dziecko** - wchodzi razem z rodzicem
+- **Kolega** - otrzymuje bilet od innego kibica
+
+Przebieg:
+1. Losuje kategorię i drużynę (A lub B)
+2. Idzie do kasy:
+   - Wybiera kasę z najkrótszą kolejką
+   - Wysyła żądanie biletu przez kolejkę komunikatów
+   - Odbiera odpowiedź (sektor lub odmowa)
+3. Idzie do bramki (kontrola bezpieczeństwa):
+   - Zajmuje miejsce na stanowisku
+   - Czeka na kontrolę (semafor `SEM_SLOT`)
+   - Jeśli inny kibic innej drużyny - przepuszcza go (max 5 razy)
+4. Wchodzi na sektor i ogląda mecz (czeka na `SEM_FAZA_MECZU`)
+5. Po meczu lub ewakuacji opuszcza halę
+
+---
+
+## 6. Semafory
+
+Projekt wykorzystuje **146 semaforów System V** zorganizowanych w następujące grupy:
+
+### 6.1 Semafor główny (mutex)
+
+| Indeks | Nazwa | Opis |
+|--------|-------|------|
+| 0 | SEM_MUTEX | Globalny mutex do ochrony sekcji krytycznych przy dostępie do pamięci współdzielonej |
+
+### 6.2 Semafory stanowisk kontroli (SEM_SLOT)
+
+| Indeksy | Wzór | Opis |
+|---------|------|------|
+| 2-49 | `SEM_SLOT(sektor, stanowisko, miejsce)` | 8 sektorów × 2 stanowiska × 3 miejsca = 48 semaforów. Kibic czeka na swoim semaforze aż pracownik zakończy kontrolę |
+
+### 6.3 Semafory sektorów (SEM_SEKTOR)
+
+| Indeksy | Wzór | Opis |
+|---------|------|------|
+| 50-57 | `SEM_SEKTOR(s)` | Kontrola dostępu do sektora - kibic czeka jeśli sektor zablokowany |
+
+### 6.4 Semafory rodzin (SEM_RODZINA)
+
+| Indeksy | Wzór | Opis |
+|---------|------|------|
+| 58-107 | `SEM_RODZINA(id)` | Synchronizacja rodzica i dziecka przy bramce (50 rodzin max) |
+
+### 6.5 Semafor fazy meczu
+
+| Indeks | Nazwa | Opis |
+|--------|-------|------|
+| 108 | SEM_FAZA_MECZU | Kibice czekający na koniec meczu. Wartość zwiększana masowo po zakończeniu meczu |
+
+### 6.6 Semafory pracy pracowników
+
+| Indeksy | Wzór | Opis |
+|---------|------|------|
+| 109-116 | `SEM_PRACA(s)` | Pracownik czeka na tym semaforze na kibica do kontroli |
+
+### 6.7 Semafory bramek
+
+| Indeksy | Wzór | Opis |
+|---------|------|------|
+| 117-132 | `SEM_BRAMKA(sektor, stanowisko)` | Synchronizacja zajmowania miejsc na stanowisku kontroli |
+
+### 6.8 Semafory kas
+
+| Indeksy | Wzór | Opis |
+|---------|------|------|
+| 133-142 | `SEM_KASA(id)` | Kasjer czeka na tym semaforze gdy kasa jest nieaktywna |
+
+### 6.9 Semafory pomocnicze
+
+| Indeks | Nazwa | Opis |
+|--------|-------|------|
+| 143 | SEM_KIBIC_WYSZEDL | Sygnalizacja wyjścia kibica z hali |
+| 144 | SEM_EWAKUACJA_KONIEC | Sygnalizacja zakończenia ewakuacji |
+| 145 | SEM_START_MECZU | Kibice czekający na rozpoczęcie meczu (wartość 0 = mecz trwa) |
+
+---
+
+## 7. Pamięć współdzielona
+
+Projekt wykorzystuje jeden segment pamięci współdzielonej zawierający strukturę `StanHali`:
+
+### 7.1 Parametry hali
+
+| Pole | Typ | Opis |
+|------|-----|------|
+| `pojemnosc_calkowita` | int | Całkowita pojemność K |
+| `pojemnosc_sektora` | int | Pojemność jednego sektora (K/8) |
+| `pojemnosc_vip` | int | Pojemność sektora VIP |
+| `limit_vip` | int | Maksymalna liczba VIP (<0.3% * K) |
+
+### 7.2 Stan sektorów
+
+| Pole | Typ | Opis |
+|------|-----|------|
+| `liczniki_sektorow[9]` | int[] | Liczba sprzedanych biletów w każdym sektorze |
+| `osoby_w_sektorze[9]` | int[] | Aktualna liczba osób w każdym sektorze |
+| `sektor_zablokowany[8]` | int[] | Flagi blokady sektorów |
+| `sektor_ewakuowany[8]` | int[] | Flagi ewakuacji sektorów |
+
+### 7.3 Stan kas
+
+| Pole | Typ | Opis |
+|------|-----|------|
+| `kasa_aktywna[10]` | int[] | Flagi aktywności kas |
+| `kasa_zamykanie[10]` | int[] | Flagi kas w trakcie zamykania |
+| `kolejka_dlugosc[10]` | int[] | Długość kolejki do każdej kasy |
+| `wszystkie_bilety_sprzedane` | int | Flaga wyprzedania biletów |
+| `aktywne_kasy` | int | Liczba aktywnych kas |
+
+### 7.4 PID-y procesów
+
+| Pole | Typ | Opis |
+|------|-----|------|
+| `pidy_kasjerow[10]` | pid_t[] | PID-y procesów kasjerów |
+| `pidy_pracownikow[8]` | pid_t[] | PID-y procesów pracowników |
+| `pid_kierownika` | pid_t | PID kierownika |
+| `pid_main` | pid_t | PID procesu głównego |
+
+### 7.5 Stan symulacji
+
+| Pole | Typ | Opis |
+|------|-----|------|
+| `suma_kibicow_w_hali` | int | Aktualna liczba kibiców na hali |
+| `liczba_vip` | int | Aktualna liczba VIP na hali |
+| `ewakuacja_trwa` | int | Flaga trwającej ewakuacji |
+| `faza_meczu` | FazaMeczu | PRZED_MECZEM / MECZ / PO_MECZU |
+| `czas_startu_symulacji` | time_t | Timestamp rozpoczęcia |
+| `czas_do_meczu` | int | Sekundy do rozpoczęcia meczu |
+| `czas_trwania_meczu` | int | Czas trwania meczu w sekundach |
+
+### 7.6 Struktury bramek i rodzin
+
+| Pole | Typ | Opis |
+|------|-----|------|
+| `bramki[8][2]` | Bramka[][] | 8 sektorów × 2 stanowiska - stan kontroli |
+| `rejestr_rodzin` | RejestrRodzin | Rejestr par rodzic-dziecko |
+
+---
+
+## 8. Kolejki komunikatów
+
+Projekt wykorzystuje jedną kolejkę komunikatów System V do komunikacji kibic-kasjer:
+
+### 8.1 Komunikat zapytania (kibic → kasjer)
+
+```c
+typedef struct {
+    long mtype;          // TYP_KOMUNIKATU_ZAPYTANIE (1)
+    pid_t pid_kibica;    // PID kibica do odpowiedzi
+    int id_druzyny;      // DRUZYNA_A lub DRUZYNA_B
+    int czy_vip;         // 1 jeśli VIP
+    int liczba_biletow;  // 1 lub 2
+    int nr_sektora;      // -1 = dowolny, 0-7 = konkretny
+    int nr_kasy;         // Numer wybranej kasy
+} KomunikatBilet;
+```
+
+### 8.2 Komunikat odpowiedzi (kasjer → kibic)
+
+```c
+typedef struct {
+    long mtype;              // PID kibica
+    int przydzielony_sektor; // Numer przydzielonego sektora
+    int liczba_sprzedanych;  // Ile biletów sprzedano
+    int czy_sukces;          // 1 = sukces, 0 = brak miejsc
+} OdpowiedzBilet;
+```
+
+### 8.3 Przepływ komunikacji
+
+1. Kibic wybiera kasę z najkrótszą kolejką
+2. Kibic wysyła `KomunikatBilet` z `mtype = TYP_KOMUNIKATU_ZAPYTANIE`
+3. Kasjer odbiera komunikat (`msgrcv` z typem 1)
+4. Kasjer sprawdza dostępność miejsc i wysyła `OdpowiedzBilet` z `mtype = pid_kibica`
+5. Kibic odbiera odpowiedź (`msgrcv` z typem = swój PID)
+
+---
+
+## 9. Łącza nazwane (FIFO)
+
+Projekt wykorzystuje jedno łącze FIFO do komunikacji pracownik → kierownik:
+
+### 9.1 Ścieżka FIFO
+
+```
+/tmp/hala_fifo_ewakuacja
+```
+
+### 9.2 Struktura komunikatu
+
+```c
+typedef struct {
+    int typ;                // 1 = ewakuacja zakończona
+    int nr_sektora;         // Numer sektora
+    pid_t pid_pracownika;   // PID pracownika
+    char wiadomosc[128];    // Opis tekstowy
+} KomunikatFifo;
+```
+
+### 9.3 Zastosowanie
+
+- Pracownik po ewakuacji wszystkich kibiców z sektora wysyła komunikat do kierownika
+- Kierownik w osobnym wątku odbiera komunikaty i aktualizuje status ewakuacji
+- Po otrzymaniu komunikatów ze wszystkich 8 sektorów kierownik wie, że hala jest pusta
+
+---
+
+## 10. Gniazda sieciowe (sockets)
+
+Projekt zawiera serwer TCP do zewnętrznego monitoringu:
+
+### 10.1 Parametry
+
+| Parametr | Wartość |
+|----------|---------|
+| Port | 9999 |
+| Protokół | TCP (SOCK_STREAM) |
+| Adres | INADDR_ANY (wszystkie interfejsy) |
+
+### 10.2 Format odpowiedzi
+
+```
+HALA|OSOB_W_HALI:123|SUMA_BILETOW:456|BILETY:DOSTEPNE|EWAKUACJA:NIE|FAZA:1|S0:50/200(osob:48)|...|VIP:3/4(osob:3)
+```
+
+### 10.3 Użycie monitora
+
+```bash
+./monitor localhost 9999
+```
+
+---
+
+## 11. Obsługa sygnałów
+
+### 11.1 Sygnały czasu rzeczywistego
+
+| Sygnał | Nadawca | Odbiorca | Akcja |
+|--------|---------|----------|-------|
+| SIGRTMIN+1 | Kierownik | Pracownik | Blokada wejścia do sektora |
+| SIGRTMIN+2 | Kierownik | Pracownik | Odblokowanie wejścia |
+| SIGRTMIN+3 | Kierownik | Pracownik | Rozpoczęcie ewakuacji |
+
+### 11.2 Implementacja w pracowniku
+
+Pracownik używa dedykowanego wątku z `sigwait()`:
+
+1. Blokuje sygnały SIGRTMIN+1/2/3 w masce sygnałów
+2. Wątek czeka na `sigwait()` na te sygnały
+3. Po otrzymaniu sygnału ustawia odpowiednie flagi w pamięci współdzielonej
+4. Budzi wątki stanowisk przez `pthread_cond_broadcast()`
+
+### 11.3 Obsługa SIGTERM/SIGINT
+
+- Proces główny ignoruje SIGTERM podczas zamykania
+- Wysyła SIGTERM do grupy procesów `kill(0, SIGTERM)`
+- Kierownik obsługuje SIGINT do czystego zamknięcia
+
+---
+
+## 12. Obsługa plików
+
+### 12.1 Plik logów (symulacja.log)
+
+System logowania w `rejestr.h` wykorzystuje:
+
+| Funkcja | Użycie |
+|---------|--------|
+| `creat()` | Tworzenie/czyszczenie pliku logów |
+| `open()` | Otwarcie pliku do dopisywania (O_WRONLY \| O_APPEND) |
+| `write()` | Zapis logów |
+| `close()` | Zamknięcie pliku |
+| `flock()` | Blokada pliku przy współbieżnym zapisie |
+
+### 12.2 Format logów
+
+```
+[HH:MM:SS] [KATEGORIA ] [PID:XXXXXX] Treść komunikatu
+```
+
+Kategorie: MAIN, KIEROWNIK, KASJER, PRACOWNIK, KIBIC, KONTROLA, STATYSTYKI, SEKTOR
+
+---
+
+## 13. Wątki (pthreads)
+
+### 13.1 Wątki w procesie głównym
+
+| Wątek | Funkcja | Opis |
+|-------|---------|------|
+| `watek_czasu_meczu` | Zarządzanie fazami | Czeka na start meczu, zmienia fazę, czeka na koniec |
+| `watek_serwera_socket` | Serwer monitoringu | Obsługuje połączenia TCP od monitora |
+
+### 13.2 Wątki w procesie pracownika
+
+| Wątek | Funkcja | Opis |
+|-------|---------|------|
+| `watek_stanowiska(0)` | Stanowisko kontroli 0 | Kontrola kibiców |
+| `watek_stanowiska(1)` | Stanowisko kontroli 1 | Kontrola kibiców |
+| `watek_sygnalow` | Obsługa sygnałów | sigwait() na SIGRTMIN+1/2/3 |
+
+### 13.3 Synchronizacja wątków
+
+| Mechanizm | Użycie |
+|-----------|--------|
+| `pthread_mutex_t` | Ochrona struktur Bramka, RejestrRodzin, mutex_sektor |
+| `pthread_cond_t` | Sygnalizacja zmian blokady/ewakuacji (cond_sektor) |
+| `pthread_create()` | Tworzenie wątków |
+| `pthread_join()` | Oczekiwanie na zakończenie wątków stanowisk |
+| `pthread_detach()` | Wątek socket i sygnałów działają niezależnie |
+
+---
+
+## 14. Obsługa błędów
+
+### 14.1 Makro SPRAWDZ
+
+```c
+#define SPRAWDZ(x) \
+    do { \
+        if ((x) == -1) { \
+            perror(#x); \
+            exit(EXIT_FAILURE); \
+        } \
+    } while (0)
+```
+
+Używane przy wszystkich wywołaniach systemowych (shmget, semget, msgget, fork, itp.)
+
+### 14.2 Walidacja danych wejściowych
+
+```c
+#define WALIDUJ_ZAKRES(wartosc, min, max, nazwa) \
+    do { \
+        if ((wartosc) < (min) || (wartosc) > (max)) { \
+            fprintf(stderr, "Blad: %s musi byc w zakresie %d-%d\n", ...); \
+            exit(EXIT_FAILURE); \
+        } \
+    } while (0)
+```
+
+### 14.3 Bezpieczne parsowanie
+
+Funkcja `parsuj_int()` - walidacja argumentów z linii poleceń
+Funkcja `bezpieczny_scanf_int()` - walidacja danych od użytkownika w kierowniku
+
+### 14.4 Obsługa errno
+
+- Wszystkie funkcje systemowe sprawdzają wartość zwracaną
+- W przypadku błędu wywoływane `perror()` z opisem kontekstu
+- Specjalna obsługa `EINTR` - ponawianie operacji przerwanej sygnałem
+- Funkcja pomocnicza `semop_retry_ctx()` automatycznie ponawia semop przy EINTR
+
+---
+
+## 15. Co udało się zrealizować
+
+### 15.1 Wymagania obowiązkowe - ZREALIZOWANE
+
+- [x] 8 sektorów + sektor VIP
+- [x] 10 kas z dynamiczną aktywacją (min 2 zawsze czynne)
+- [x] 2 stanowiska kontroli na sektor (max 3 osoby)
+- [x] Kontrola drużyn na stanowisku (ta sama drużyna)
+- [x] Limit przepuszczeń (max 5) z obsługą frustracji
+- [x] Obsługa VIP (osobne wejście, omijanie kolejki)
+- [x] Obsługa rodzin (dzieci <15 lat z opiekunem)
+- [x] Sygnały blokady/odblokowania/ewakuacji
+- [x] Komunikacja FIFO (pracownik → kierownik)
+- [x] Logowanie do pliku tekstowego
+
+### 15.2 Wymagania techniczne - ZREALIZOWANE
+
+- [x] Język C
+- [x] fork() + exec() dla procesów
+- [x] Pamięć współdzielona (shmget, shmat, shmdt, shmctl)
+- [x] Semafory System V (semget, semctl, semop)
+- [x] Kolejki komunikatów (msgget, msgsnd, msgrcv, msgctl)
+- [x] Łącza nazwane FIFO (mkfifo)
+- [x] Gniazda sieciowe (socket, bind, listen, accept)
+- [x] Wątki POSIX (pthread_create, pthread_join, pthread_mutex, pthread_cond)
+- [x] Obsługa sygnałów (sigaction, sigwait, kill)
+- [x] Obsługa błędów (perror, errno)
+- [x] Walidacja danych wejściowych
+- [x] Minimalne prawa dostępu IPC (0600)
+- [x] Usuwanie zasobów po zakończeniu
+
+---
+
+## 16. Elementy specjalne
+
+### 16.1 Kolorowy interfejs terminala
+
+Symulacja wykorzystuje kody ANSI do kolorowania wyjścia:
+- Zielony - sukces, normalne operacje
+- Czerwony - błędy, ostrzeżenia, frustracja
+- Żółty - oczekiwanie, blokada
+- Cyan - informacje VIP, dzieci
+- Magenta - sektor VIP
+- Bold - nagłówki, ważne komunikaty
+
+### 16.2 Serwer monitoringu TCP
+
+Zewnętrzny program `monitor.c` może połączyć się przez socket i otrzymać aktualny stan hali w formacie tekstowym - przydatne do debugowania i wizualizacji.
+
+### 16.3 System logowania
+
+Kompletny system logowania z:
+- Timestampami
+- Kategoryzacją komunikatów
+- PID-ami procesów
+- Blokadą pliku (flock) dla bezpieczeństwa współbieżnego
+- Automatycznym nagłówkiem/stopką
+
+### 16.4 Obsługa rodzin
+
+Zaawansowana synchronizacja rodzic-dziecko:
+- Rejestr rodzin w pamięci współdzielonej
+- Dedykowane semafory dla każdej rodziny
+- Rodzic czeka na dziecko przy bramce
+- Dziecko nie może wejść bez rodzica
+
+### 16.5 Dynamiczne zarządzanie kasami
+
+Implementacja zgodna z wymaganiami:
+- Algorytm aktywacji/deaktywacji kas
+- Kasa 0 jako "koordynator" - podejmuje decyzje dla wszystkich
+- Płynne zamykanie (czeka na opróżnienie kolejki)
+
+---
+
+## 17. Opisy ważniejszych fragmentów kodu
+
+### 17.1 Inicjalizacja zasobów IPC (main.c)
+
+Proces główny tworzy wszystkie zasoby IPC przed uruchomieniem procesów potomnych:
+
+```c
+// Pamięć współdzielona
+shm_id = shmget(klucz_shm, sizeof(StanHali), IPC_CREAT | 0600);
+stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
+
+// Semafory (146 semaforów)
+sem_id = semget(klucz_sem, SEM_TOTAL, IPC_CREAT | 0600);
+
+// Kolejka komunikatów
+msg_id = msgget(klucz_msg, IPC_CREAT | 0600);
+
+// FIFO
+mkfifo(FIFO_PRACOWNIK_KIEROWNIK, 0600);
+```
+
+### 17.2 Dynamika kas (kasjer.c)
+
+Kasa 0 zarządza wszystkimi kasami na podstawie długości kolejek:
+
+```c
+// Oblicz potrzebną liczbę kas
+int K = suma_kolejek;  // suma kibiców we wszystkich kolejkach
+int limit = pojemnosc_calkowita / 10;
+int potrzebne = (K + limit - 1) / limit;  // ceiling division
+if (potrzebne < 2) potrzebne = 2;  // zawsze min 2
+
+// Aktywuj kasę jeśli za mało
+if (potrzebne > N) {
+    // znajdź nieaktywną kasę i aktywuj
+    stan_hali->kasa_aktywna[i] = 1;
+    semop(sem_id, &wake, 1);  // obudź kasjera
+}
+// Deaktywuj kasę jeśli za dużo
+else if (potrzebne < N && N > 2) {
+    stan_hali->kasa_zamykanie[i] = 1;  // oznacz do zamknięcia
+}
+```
+
+### 17.3 Kontrola drużyn na stanowisku (pracownik.c)
+
+Pracownik sprawdza czy kibice na stanowisku są tej samej drużyny:
+
+```c
+// Jeśli stanowisko zajęte przez inną drużynę
+if (b->obecna_druzyna != 0 && b->obecna_druzyna != druzyna_kibica) {
+    // Kibic musi poczekać lub przepuścić
+    przepuszczeni++;
+    if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
+        // Frustracja - kibic wpycha się siłą
+    }
+}
+```
+
+### 17.4 Synchronizacja rodziny (kibic.c)
+
+Rodzic i dziecko synchronizują się przy bramce:
+
+```c
+// Rodzic rejestruje się przy bramce
+rejestr->rodziny[id].rodzic_przy_bramce = 1;
+
+// Dziecko czeka na rodzica
+while (!rejestr->rodziny[id].rodzic_przy_bramce) {
+    semop(sem_id, &wait_rodzina, 1);
+}
+
+// Rodzic czeka na dziecko
+while (!rejestr->rodziny[id].dziecko_przy_bramce) {
+    semop(sem_id, &wait_rodzina, 1);
+}
+```
+
+### 17.5 Obsługa ewakuacji (pracownik.c)
+
+Wątek sygnałów obsługuje żądanie ewakuacji:
+
+```c
+void* watek_sygnalow(void *arg) {
+    sigset_t set;
+    sigaddset(&set, SYGNAL_EWAKUACJA);
+
+    while (1) {
+        int sig;
+        sigwait(&set, &sig);
+
+        if (sig == SYGNAL_EWAKUACJA) {
+            stan_hali->ewakuacja_trwa = 1;
+            pthread_cond_broadcast(&cond_sektor);
+
+            // Czekaj aż wszyscy wyjdą
+            while (stan_hali->osoby_w_sektorze[id] > 0) {
+                // ...
+            }
+
+            // Wyślij potwierdzenie przez FIFO
+            write(fifo_fd, &komunikat, sizeof(komunikat));
+        }
+    }
+}
+```
+
+### 17.6 Komunikacja kibic-kasjer (kibic.c, kasjer.c)
+
+Kibic wysyła żądanie biletu:
+
+```c
+KomunikatBilet kom;
+kom.mtype = TYP_KOMUNIKATU_ZAPYTANIE;
+kom.pid_kibica = getpid();
+kom.liczba_biletow = ile_biletow;
+msgsnd(msg_id, &kom, sizeof(kom) - sizeof(long), 0);
+
+// Czekaj na odpowiedź
+OdpowiedzBilet odp;
+msgrcv(msg_id, &odp, sizeof(odp) - sizeof(long), getpid(), 0);
+```
+
+---
+
+## 18. Znane ograniczenia
+
+1. Maksymalna liczba rodzin: 50 (ograniczenie tablicy)
+2. Maksymalna pojemność: 100000 (ograniczenie walidacji)
+3. Monitor zewnętrzny wymaga osobnego uruchomienia
+4. Test ewakuacji wymaga ręcznego uruchomienia kierownika
+
+---
+
+## 19. Testy
+
+*Sekcja do uzupełnienia*
+
+---
+
+## 20. Linki do GitHub
+
+**Repozytorium:** https://github.com/bgranek/projektso
+
+### 20.1 Tworzenie i obsługa plików (creat, open, close, read, write, unlink)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `creat()` | rejestr.h | 27 | [rejestr.h#L27](https://github.com/bgranek/projektso/blob/main/rejestr.h#L27) |
+| `open()` | rejestr.h | 37 | [rejestr.h#L37](https://github.com/bgranek/projektso/blob/main/rejestr.h#L37) |
+| `open()` | pracownik.c | 142 | [pracownik.c#L142](https://github.com/bgranek/projektso/blob/main/pracownik.c#L142) |
+| `open()` | kierownik.c | 46 | [kierownik.c#L46](https://github.com/bgranek/projektso/blob/main/kierownik.c#L46) |
+| `write()` | rejestr.h | 58 | [rejestr.h#L58](https://github.com/bgranek/projektso/blob/main/rejestr.h#L58) |
+| `write()` | pracownik.c | 157 | [pracownik.c#L157](https://github.com/bgranek/projektso/blob/main/pracownik.c#L157) |
+| `read()` | kierownik.c | 64 | [kierownik.c#L64](https://github.com/bgranek/projektso/blob/main/kierownik.c#L64) |
+| `close()` | rejestr.h | 91 | [rejestr.h#L91](https://github.com/bgranek/projektso/blob/main/rejestr.h#L91) |
+| `close()` | pracownik.c | 166 | [pracownik.c#L166](https://github.com/bgranek/projektso/blob/main/pracownik.c#L166) |
+| `unlink()` | main.c | 17 | [main.c#L17](https://github.com/bgranek/projektso/blob/main/main.c#L17) |
+
+### 20.2 Tworzenie procesów (fork, exec, exit, wait)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `fork()` + `execl()` kasjer | main.c | 463-467 | [main.c#L463-L467](https://github.com/bgranek/projektso/blob/main/main.c#L463-L467) |
+| `fork()` + `execl()` pracownik | main.c | 480-484 | [main.c#L480-L484](https://github.com/bgranek/projektso/blob/main/main.c#L480-L484) |
+| `fork()` + `execl()` kibic | main.c | 340-342 | [main.c#L340-L342](https://github.com/bgranek/projektso/blob/main/main.c#L340-L342) |
+| `exit()` | pracownik.c | 68 | [pracownik.c#L68](https://github.com/bgranek/projektso/blob/main/pracownik.c#L68) |
+| `wait()` | main.c | 229 | [main.c#L229](https://github.com/bgranek/projektso/blob/main/main.c#L229) |
+
+### 20.3 Tworzenie i obsługa wątków (pthread_*)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `pthread_create()` socket | main.c | 559 | [main.c#L559](https://github.com/bgranek/projektso/blob/main/main.c#L559) |
+| `pthread_create()` czas | main.c | 566 | [main.c#L566](https://github.com/bgranek/projektso/blob/main/main.c#L566) |
+| `pthread_create()` generator | main.c | 571 | [main.c#L571](https://github.com/bgranek/projektso/blob/main/main.c#L571) |
+| `pthread_create()` stanowiska | pracownik.c | 365-376 | [pracownik.c#L365-L376](https://github.com/bgranek/projektso/blob/main/pracownik.c#L365-L376) |
+| `pthread_create()` sygnaly | pracownik.c | 135 | [pracownik.c#L135](https://github.com/bgranek/projektso/blob/main/pracownik.c#L135) |
+| `pthread_join()` | main.c | 609-613 | [main.c#L609-L613](https://github.com/bgranek/projektso/blob/main/main.c#L609-L613) |
+| `pthread_mutex_lock()` | pracownik.c | 21 | [pracownik.c#L21](https://github.com/bgranek/projektso/blob/main/pracownik.c#L21) |
+| `pthread_cond_broadcast()` | pracownik.c | 23 | [pracownik.c#L23](https://github.com/bgranek/projektso/blob/main/pracownik.c#L23) |
+| `pthread_cond_wait()` | pracownik.c | 326 | [pracownik.c#L326](https://github.com/bgranek/projektso/blob/main/pracownik.c#L326) |
+
+### 20.4 Obsługa sygnałów (kill, sigaction, sigwait)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `sigaction()` SIGTERM | kasjer.c | 312-316 | [kasjer.c#L312-L316](https://github.com/bgranek/projektso/blob/main/kasjer.c#L312-L316) |
+| `sigaction()` EWAKUACJA | kibic.c | 193-197 | [kibic.c#L193-L197](https://github.com/bgranek/projektso/blob/main/kibic.c#L193-L197) |
+| `sigaction()` SIGINT | kierownik.c | 286-290 | [kierownik.c#L286-L290](https://github.com/bgranek/projektso/blob/main/kierownik.c#L286-L290) |
+| `sigwaitinfo()` | pracownik.c | 86 | [pracownik.c#L86](https://github.com/bgranek/projektso/blob/main/pracownik.c#L86) |
+| `kill()` blokada | kierownik.c | 207 | [kierownik.c#L207](https://github.com/bgranek/projektso/blob/main/kierownik.c#L207) |
+| `kill()` odblokowanie | kierownik.c | 240 | [kierownik.c#L240](https://github.com/bgranek/projektso/blob/main/kierownik.c#L240) |
+| `kill()` ewakuacja | kierownik.c | 273 | [kierownik.c#L273](https://github.com/bgranek/projektso/blob/main/kierownik.c#L273) |
+| `kill()` SIGTERM | main.c | 205 | [main.c#L205](https://github.com/bgranek/projektso/blob/main/main.c#L205) |
+
+### 20.5 Synchronizacja - semafory (ftok, semget, semctl, semop)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `ftok()` | main.c | 86-90 | [main.c#L86-L90](https://github.com/bgranek/projektso/blob/main/main.c#L86-L90) |
+| `semget()` tworzenie | main.c | 135 | [main.c#L135](https://github.com/bgranek/projektso/blob/main/main.c#L135) |
+| `semget()` dostęp | kasjer.c | 46 | [kasjer.c#L46](https://github.com/bgranek/projektso/blob/main/kasjer.c#L46) |
+| `semctl()` inicjalizacja | main.c | 140-160 | [main.c#L140-L160](https://github.com/bgranek/projektso/blob/main/main.c#L140-L160) |
+| `semctl()` usunięcie | main.c | 47-48 | [main.c#L47-L48](https://github.com/bgranek/projektso/blob/main/main.c#L47-L48) |
+| `semop()` lock | kasjer.c | 77 | [kasjer.c#L77](https://github.com/bgranek/projektso/blob/main/kasjer.c#L77) |
+| `semop()` unlock | kasjer.c | 85 | [kasjer.c#L85](https://github.com/bgranek/projektso/blob/main/kasjer.c#L85) |
+| `semop_retry_ctx()` helper | common.h | 272-279 | [common.h#L272-L279](https://github.com/bgranek/projektso/blob/main/common.h#L272-L279) |
+
+### 20.6 Łącza nazwane FIFO (mkfifo)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `mkfifo()` | main.c | 75 | [main.c#L75](https://github.com/bgranek/projektso/blob/main/main.c#L75) |
+| FIFO write (pracownik→kierownik) | pracownik.c | 142-167 | [pracownik.c#L142-L167](https://github.com/bgranek/projektso/blob/main/pracownik.c#L142-L167) |
+| FIFO read (kierownik) | kierownik.c | 56-118 | [kierownik.c#L56-L118](https://github.com/bgranek/projektso/blob/main/kierownik.c#L56-L118) |
+
+### 20.7 Segmenty pamięci dzielonej (shmget, shmat, shmdt, shmctl)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `shmget()` tworzenie | main.c | 93-101 | [main.c#L93-L101](https://github.com/bgranek/projektso/blob/main/main.c#L93-L101) |
+| `shmat()` | main.c | 105 | [main.c#L105](https://github.com/bgranek/projektso/blob/main/main.c#L105) |
+| `shmget()` dostęp | kasjer.c | 40 | [kasjer.c#L40](https://github.com/bgranek/projektso/blob/main/kasjer.c#L40) |
+| `shmat()` kasjer | kasjer.c | 49 | [kasjer.c#L49](https://github.com/bgranek/projektso/blob/main/kasjer.c#L49) |
+| `shmdt()` | kasjer.c | 26 | [kasjer.c#L26](https://github.com/bgranek/projektso/blob/main/kasjer.c#L26) |
+| `shmctl()` usunięcie | main.c | 39 | [main.c#L39](https://github.com/bgranek/projektso/blob/main/main.c#L39) |
+| Struktura StanHali | common.h | 148-182 | [common.h#L148-L182](https://github.com/bgranek/projektso/blob/main/common.h#L148-L182) |
+
+### 20.8 Kolejki komunikatów (msgget, msgsnd, msgrcv, msgctl)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `msgget()` tworzenie | main.c | 181-189 | [main.c#L181-L189](https://github.com/bgranek/projektso/blob/main/main.c#L181-L189) |
+| `msgget()` dostęp | kasjer.c | 43 | [kasjer.c#L43](https://github.com/bgranek/projektso/blob/main/kasjer.c#L43) |
+| `msgsnd()` kibic | kibic.c | 372 | [kibic.c#L372](https://github.com/bgranek/projektso/blob/main/kibic.c#L372) |
+| `msgrcv()` kibic | kibic.c | 379 | [kibic.c#L379](https://github.com/bgranek/projektso/blob/main/kibic.c#L379) |
+| `msgrcv()` kasjer | kasjer.c | 174 | [kasjer.c#L174](https://github.com/bgranek/projektso/blob/main/kasjer.c#L174) |
+| `msgsnd()` kasjer | kasjer.c | 266 | [kasjer.c#L266](https://github.com/bgranek/projektso/blob/main/kasjer.c#L266) |
+| `msgctl()` usunięcie | main.c | 53 | [main.c#L53](https://github.com/bgranek/projektso/blob/main/main.c#L53) |
+| Struktura KomunikatBilet | common.h | 184-192 | [common.h#L184-L192](https://github.com/bgranek/projektso/blob/main/common.h#L184-L192) |
+| Struktura OdpowiedzBilet | common.h | 194-199 | [common.h#L194-L199](https://github.com/bgranek/projektso/blob/main/common.h#L194-L199) |
+
+### 20.9 Gniazda sieciowe (socket, bind, listen, accept, connect)
+
+| Funkcja | Plik | Linia | Link |
+|---------|------|-------|------|
+| `socket()` serwer | main.c | 367 | [main.c#L367](https://github.com/bgranek/projektso/blob/main/main.c#L367) |
+| `bind()` | main.c | 388 | [main.c#L388](https://github.com/bgranek/projektso/blob/main/main.c#L388) |
+| `listen()` | main.c | 396 | [main.c#L396](https://github.com/bgranek/projektso/blob/main/main.c#L396) |
+| `accept()` | main.c | 408 | [main.c#L408](https://github.com/bgranek/projektso/blob/main/main.c#L408) |
+| `socket()` klient | monitor.c | 35 | [monitor.c#L35](https://github.com/bgranek/projektso/blob/main/monitor.c#L35) |
+| `connect()` | monitor.c | 55 | [monitor.c#L55](https://github.com/bgranek/projektso/blob/main/monitor.c#L55) |
+| Cały serwer socket | main.c | 364-459 | [main.c#L364-L459](https://github.com/bgranek/projektso/blob/main/main.c#L364-L459) |
+
+### 20.10 Obsługa błędów (perror, errno, walidacja)
+
+| Element | Plik | Linia | Link |
+|---------|------|-------|------|
+| Makro SPRAWDZ | common.h | 98-104 | [common.h#L98-L104](https://github.com/bgranek/projektso/blob/main/common.h#L98-L104) |
+| Makro WALIDUJ_ZAKRES | common.h | 106-113 | [common.h#L106-L113](https://github.com/bgranek/projektso/blob/main/common.h#L106-L113) |
+| parsuj_int() | common.h | 208-230 | [common.h#L208-L230](https://github.com/bgranek/projektso/blob/main/common.h#L208-L230) |
+| bezpieczny_scanf_int() | common.h | 232-270 | [common.h#L232-L270](https://github.com/bgranek/projektso/blob/main/common.h#L232-L270) |
+| semop_retry_ctx() (EINTR) | common.h | 272-279 | [common.h#L272-L279](https://github.com/bgranek/projektso/blob/main/common.h#L272-L279) |
+
+### 20.11 Własne moduły
+
+| Moduł | Opis | Link |
+|-------|------|------|
+| main.c | Proces główny | [main.c](https://github.com/bgranek/projektso/blob/main/main.c) |
+| kierownik.c | Program kierownika | [kierownik.c](https://github.com/bgranek/projektso/blob/main/kierownik.c) |
+| kasjer.c | Proces kasjera | [kasjer.c](https://github.com/bgranek/projektso/blob/main/kasjer.c) |
+| pracownik.c | Proces pracownika | [pracownik.c](https://github.com/bgranek/projektso/blob/main/pracownik.c) |
+| kibic.c | Proces kibica | [kibic.c](https://github.com/bgranek/projektso/blob/main/kibic.c) |
+| monitor.c | Monitor zewnętrzny | [monitor.c](https://github.com/bgranek/projektso/blob/main/monitor.c) |
+| common.h | Wspólne definicje | [common.h](https://github.com/bgranek/projektso/blob/main/common.h) |
+| rejestr.h | System logowania | [rejestr.h](https://github.com/bgranek/projektso/blob/main/rejestr.h) |
+
+---
+
+## 21. Podsumowanie
+
+Projekt w pełni realizuje założenia symulacji hali widowiskowo-sportowej z wykorzystaniem wszystkich wymaganych mechanizmów IPC systemu UNIX/Linux. Implementacja obejmuje komunikację międzyprocesową przez pamięć współdzieloną, semafory, kolejki komunikatów, łącza FIFO oraz gniazda sieciowe. Program poprawnie obsługuje scenariusze wieloprocesowe i wielowątkowe, zapewniając synchronizację i unikanie zakleszczeń.
