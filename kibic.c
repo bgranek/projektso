@@ -24,6 +24,9 @@ int id_rodziny = -1;
 volatile sig_atomic_t ewakuacja_mnie = 0;
 int jestem_w_hali = 0;
 int moja_kasa = -1;
+int agresor_aktywny = 0;
+int agresor_sektor = -1;
+int agresor_stanowisko = -1;
 
 void handler_ewakuacja(int sig) {
     (void)sig;
@@ -43,7 +46,7 @@ void ewakuuj_sie() {
     rejestr_log("KIBIC", "PID %d ewakuacja z sektora %d", getpid(), numer_sektora);
 
     struct sembuf op = {0, -1, 0};
-    if (semop(sem_id, &op, 1) == -1) return;
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock ewakuacja") == -1) return;
 
     stan_hali->suma_kibicow_w_hali--;
     if (numer_sektora >= 0 && numer_sektora < LICZBA_WSZYSTKICH_SEKTOROW) {
@@ -57,10 +60,10 @@ void ewakuuj_sie() {
     }
 
     op.sem_op = 1;
-    semop(sem_id, &op, 1);
+    if (semop_retry_ctx(sem_id, &op, 1, "semop unlock ewakuacja") == -1) return;
 
     struct sembuf sig_wyszedl = {SEM_KIBIC_WYSZEDL, 1, 0};
-    semop(sem_id, &sig_wyszedl, 1);
+    semop_retry_ctx(sem_id, &sig_wyszedl, 1, "semop sig wyszedl");
 
     jestem_w_hali = 0;
     printf("%sKibic %d: Ewakuowalem sie z hali.%s\n",
@@ -70,16 +73,29 @@ void ewakuuj_sie() {
 
 void obsluga_wyjscia() {
     if (stan_hali != NULL) {
+        if (agresor_aktywny && agresor_sektor >= 0 && agresor_stanowisko >= 0) {
+            struct sembuf op = {0, -1, 0};
+            if (semop_retry_ctx(sem_id, &op, 1, "semop lock agresor") == 0) {
+                Bramka *b = &stan_hali->bramki[agresor_sektor][agresor_stanowisko];
+                if (b->pid_agresora == getpid()) {
+                    b->pid_agresora = 0;
+                }
+                op.sem_op = 1;
+                semop_retry_ctx(sem_id, &op, 1, "semop unlock agresor");
+            }
+        }
         if (jestem_rodzicem && id_rodziny >= 0) {
             stan_hali->rejestr_rodzin.rodziny[id_rodziny].aktywna = 0;
         }
-        shmdt(stan_hali);
+        if (shmdt(stan_hali) == -1) {
+            perror("shmdt kibic");
+        }
     }
 }
 
 int zarejestruj_rodzine(pid_t pid_rodzica, pid_t pid_dziecka) {
     struct sembuf op = {0, -1, 0};
-    if (semop(sem_id, &op, 1) == -1) return -1;
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock rodzina") == -1) return -1;
 
     int idx = -1;
     RejestrRodzin *rej = &stan_hali->rejestr_rodzin;
@@ -102,7 +118,7 @@ int zarejestruj_rodzine(pid_t pid_rodzica, pid_t pid_dziecka) {
     }
 
     op.sem_op = 1;
-    semop(sem_id, &op, 1);
+    if (semop_retry_ctx(sem_id, &op, 1, "semop unlock rodzina") == -1) return -1;
     return idx;
 }
 
@@ -110,7 +126,7 @@ void ustaw_przy_bramce(int flaga) {
     if (id_rodziny < 0) return;
 
     struct sembuf op = {0, -1, 0};
-    if (semop(sem_id, &op, 1) == -1) return;
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock bramka") == -1) return;
 
     Rodzina *r = &stan_hali->rejestr_rodzin.rodziny[id_rodziny];
     if (jestem_rodzicem) {
@@ -122,11 +138,11 @@ void ustaw_przy_bramce(int flaga) {
     int both_present = (r->rodzic_przy_bramce && r->dziecko_przy_bramce);
 
     op.sem_op = 1;
-    semop(sem_id, &op, 1);
+    if (semop_retry_ctx(sem_id, &op, 1, "semop unlock bramka") == -1) return;
 
     if (both_present && flaga) {
         struct sembuf sig_rodz = {SEM_RODZINA(id_rodziny), 2, 0};
-        semop(sem_id, &sig_rodz, 1);
+        semop_retry_ctx(sem_id, &sig_rodz, 1, "semop sig rodzina");
     }
 }
 
@@ -141,9 +157,8 @@ int czekaj_na_partnera() {
     for (int i = 0; i < 100; i++) {
         if (stan_hali->ewakuacja_trwa) return 0;
         struct sembuf wait_rodz = {SEM_RODZINA(id_rodziny), -1, 0};
-        if (semop(sem_id, &wait_rodz, 1) == -1) {
-            if (errno == EINTR) continue;
-            break;
+        if (semop_retry_ctx(sem_id, &wait_rodz, 1, "semop wait rodzina") == -1) {
+            return 0;
         }
         if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
             return 1;
@@ -200,7 +215,7 @@ int sprawdz_vip() {
     operacje[0].sem_op = -1;
     operacje[0].sem_flg = 0;
 
-    if (semop(sem_id, operacje, 1) == -1) {
+    if (semop_retry_ctx(sem_id, operacje, 1, "semop lock vip") == -1) {
         return 0;
     }
 
@@ -210,9 +225,26 @@ int sprawdz_vip() {
     }
 
     operacje[0].sem_op = 1;
-    semop(sem_id, operacje, 1);
+    if (semop_retry_ctx(sem_id, operacje, 1, "semop unlock vip") == -1) {
+        return 0;
+    }
 
     return moze_byc_vip;
+}
+
+int wybierz_kase_aktywna() {
+    int wybrana_kasa = -1;
+    int min_dlugosc = 1000000;
+
+    for (int i = 0; i < LICZBA_KAS; i++) {
+        if (stan_hali->kasa_aktywna[i] && !stan_hali->kasa_zamykanie[i]) {
+            if (stan_hali->kolejka_dlugosc[i] < min_dlugosc) {
+                min_dlugosc = stan_hali->kolejka_dlugosc[i];
+                wybrana_kasa = i;
+            }
+        }
+    }
+    return wybrana_kasa;
 }
 
 void aktualizuj_kolejke(int zmiana) {
@@ -221,23 +253,15 @@ void aktualizuj_kolejke(int zmiana) {
     operacje[0].sem_op = -1;
     operacje[0].sem_flg = 0;
 
-    if (semop(sem_id, operacje, 1) == -1) return;
+    if (semop_retry_ctx(sem_id, operacje, 1, "semop lock kolejka") == -1) return;
 
     if (zmiana > 0) {
-        int wybrana_kasa = -1;
-        int min_dlugosc = 100000;
-
-        for (int i = 0; i < LICZBA_KAS; i++) {
-            if (stan_hali->kasa_aktywna[i]) {
-                if (stan_hali->kolejka_dlugosc[i] < min_dlugosc) {
-                    min_dlugosc = stan_hali->kolejka_dlugosc[i];
-                    wybrana_kasa = i;
-                }
-            }
-        }
+        int wybrana_kasa = wybierz_kase_aktywna();
         if (wybrana_kasa != -1) {
             stan_hali->kolejka_dlugosc[wybrana_kasa]++;
             moja_kasa = wybrana_kasa;
+        } else {
+            moja_kasa = -1;
         }
     } else {
         if (moja_kasa >= 0 && moja_kasa < LICZBA_KAS &&
@@ -255,7 +279,57 @@ void aktualizuj_kolejke(int zmiana) {
     }
 
     operacje[0].sem_op = 1;
-    semop(sem_id, operacje, 1);
+    semop_retry_ctx(sem_id, operacje, 1, "semop unlock kolejka");
+}
+
+int wybierz_kase_bez_kolejki() {
+    struct sembuf operacje[1];
+    operacje[0].sem_num = 0;
+    operacje[0].sem_op = -1;
+    operacje[0].sem_flg = 0;
+
+    if (semop_retry_ctx(sem_id, operacje, 1, "semop lock kasa") == -1) return -1;
+
+    int wybrana = wybierz_kase_aktywna();
+
+    operacje[0].sem_op = 1;
+    semop_retry_ctx(sem_id, operacje, 1, "semop unlock kasa");
+
+    return wybrana;
+}
+
+void wyczysc_slot(int sektor, int stanowisko, int slot) {
+    struct sembuf op = {0, -1, 0};
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock slot") == -1) return;
+
+    Bramka *b = &stan_hali->bramki[sektor][stanowisko];
+    memset(&b->miejsca[slot], 0, sizeof(MiejscaKolejki));
+
+    int zajete = 0;
+    for (int i = 0; i < 3; i++) {
+        if (b->miejsca[i].pid_kibica != 0) {
+            zajete = 1;
+            break;
+        }
+    }
+    if (!zajete) {
+        b->obecna_druzyna = 0;
+    }
+    if (b->pid_agresora != 0) {
+        int agresor_w_slotach = 0;
+        for (int i = 0; i < 3; i++) {
+            if (b->miejsca[i].pid_kibica == b->pid_agresora) {
+                agresor_w_slotach = 1;
+                break;
+            }
+        }
+        if (!agresor_w_slotach) {
+            b->pid_agresora = 0;
+        }
+    }
+
+    op.sem_op = 1;
+    semop_retry_ctx(sem_id, &op, 1, "semop unlock slot");
 }
 
 void sprobuj_kupic_bilet() {
@@ -274,27 +348,41 @@ void sprobuj_kupic_bilet() {
         rejestr_log("KIBIC", "PID %d VIP omija kolejke", getpid());
     }
 
+    if (jestem_vip) {
+        moja_kasa = wybierz_kase_bez_kolejki();
+    }
+
+    if (moja_kasa < 0 || moja_kasa >= LICZBA_KAS) {
+        printf("%sKibic %d: Brak aktywnych kas.%s\n",
+               KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+        rejestr_log("KIBIC", "PID %d brak aktywnych kas", getpid());
+        return;
+    }
+
     KomunikatBilet msg;
     memset(&msg, 0, sizeof(msg));
-    msg.mtype = TYP_KOMUNIKATU_ZAPYTANIE;
+    msg.mtype = moja_kasa + 1;
     msg.pid_kibica = getpid();
     msg.id_druzyny = moja_druzyna;
     msg.czy_vip = jestem_vip;
     msg.liczba_biletow = liczba_biletow;
     msg.nr_sektora = -1;
+    msg.nr_kasy = moja_kasa;
 
     if (msgsnd(msg_id, &msg, sizeof(KomunikatBilet) - sizeof(long), 0) == -1) {
-        if (!jestem_vip) aktualizuj_kolejke(-1);
+        perror("msgsnd");
+        if (!jestem_vip && moja_kasa >= 0) aktualizuj_kolejke(-1);
         return;
     }
 
     OdpowiedzBilet odp;
     if (msgrcv(msg_id, &odp, sizeof(OdpowiedzBilet) - sizeof(long), getpid(), 0) == -1) {
-        if (!jestem_vip) aktualizuj_kolejke(-1);
+        perror("msgrcv");
+        if (!jestem_vip && moja_kasa >= 0) aktualizuj_kolejke(-1);
         return;
     }
 
-    if (!jestem_vip) aktualizuj_kolejke(-1);
+    if (!jestem_vip && moja_kasa >= 0) aktualizuj_kolejke(-1);
 
     if (odp.czy_sukces) {
         ma_bilet = 1;
@@ -352,10 +440,10 @@ void idz_do_bramki() {
         rejestr_log("KIBIC", "PID %d VIP wchodzi bez kontroli", getpid());
 
         struct sembuf op = {0, -1, 0};
-        semop(sem_id, &op, 1);
+        if (semop_retry_ctx(sem_id, &op, 1, "semop lock vip wejscie") == -1) return;
         if (stan_hali->liczba_vip >= stan_hali->limit_vip) {
             op.sem_op = 1;
-            semop(sem_id, &op, 1);
+            semop_retry_ctx(sem_id, &op, 1, "semop unlock vip brak");
             printf("%sKibic %d (VIP): Brak miejsc VIP - za pozno.%s\n",
                    KOLOR_CZERWONY, getpid(), KOLOR_RESET);
             return;
@@ -364,19 +452,26 @@ void idz_do_bramki() {
         stan_hali->suma_kibicow_w_hali++;
         stan_hali->osoby_w_sektorze[SEKTOR_VIP]++;
         op.sem_op = 1;
-        semop(sem_id, &op, 1);
+        if (semop_retry_ctx(sem_id, &op, 1, "semop unlock vip wejscie") == -1) return;
 
         jestem_w_hali = 1;
-        printf("%sKibic %d: Wszedlem na sektor VIP! Ogladam mecz...%s\n",
+        printf("%sKibic %d: Wszedlem na sektor VIP.%s\n",
                KOLOR_ZIELONY, getpid(), KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d wszedl na sektor VIP", getpid());
 
+        if (stan_hali->faza_meczu == FAZA_PRZED_MECZEM) {
+            printf("Kibic %d: Czekam na start meczu.\n", getpid());
+            rejestr_log("KIBIC", "PID %d czeka na start meczu", getpid());
+            struct sembuf wait_start = {SEM_START_MECZU, 0, 0};
+            if (semop_retry_ctx(sem_id, &wait_start, 1, "semop wait start") == -1) return;
+        }
+
+        printf("Kibic %d: Ogladam mecz...\n", getpid());
+        rejestr_log("KIBIC", "PID %d oglada mecz", getpid());
+
         while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie && !stan_hali->ewakuacja_trwa) {
             struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
-            if (semop(sem_id, &wait_faza, 1) == -1) {
-                if (errno == EINTR) continue;
-                break;
-            }
+            if (semop_retry_ctx(sem_id, &wait_faza, 1, "semop wait faza") == -1) return;
         }
 
         if (ewakuacja_mnie || stan_hali->ewakuacja_trwa) {
@@ -385,15 +480,15 @@ void idz_do_bramki() {
         }
 
         op.sem_op = -1;
-        semop(sem_id, &op, 1);
+        if (semop_retry_ctx(sem_id, &op, 1, "semop lock vip wyjscie") == -1) return;
         stan_hali->suma_kibicow_w_hali--;
         stan_hali->osoby_w_sektorze[SEKTOR_VIP]--;
         stan_hali->liczba_vip--;
         op.sem_op = 1;
-        semop(sem_id, &op, 1);
+        if (semop_retry_ctx(sem_id, &op, 1, "semop unlock vip wyjscie") == -1) return;
 
         struct sembuf sig_wyszedl = {SEM_KIBIC_WYSZEDL, 1, 0};
-        semop(sem_id, &sig_wyszedl, 1);
+        semop_retry_ctx(sem_id, &sig_wyszedl, 1, "semop sig wyszedl");
 
         jestem_w_hali = 0;
         printf("Kibic %d: Wychodze z hali.\n", getpid());
@@ -408,12 +503,12 @@ void idz_do_bramki() {
         while (stan_hali->sektor_zablokowany[numer_sektora]) {
             if (stan_hali->ewakuacja_trwa) return;
             struct sembuf wait_sek = {SEM_SEKTOR(numer_sektora), -1, 0};
-            semop(sem_id, &wait_sek, 1);
+            if (semop_retry_ctx(sem_id, &wait_sek, 1, "semop wait sektor") == -1) return;
         }
     }
 
-    int proba_vip = 0;
     int przepuszczeni = 0;
+    int wpychanie = 0;
     #define MAX_PRZEPUSZCZEN 5
 
     int wybrane_stanowisko = rand() % 2;
@@ -423,7 +518,7 @@ void idz_do_bramki() {
     printf("Kibic %d: Ide do stanowiska %d w sektorze %d.\n",
            getpid(), wybrane_stanowisko, numer_sektora);
 
-    while (retry_bramka && !proba_vip) {
+    while (retry_bramka) {
     retry_bramka = 0;
     moje_miejsce = -1;
 
@@ -436,7 +531,7 @@ void idz_do_bramki() {
             while (stan_hali->sektor_zablokowany[numer_sektora]) {
                 if (stan_hali->ewakuacja_trwa) return;
                 struct sembuf wait_sek = {SEM_SEKTOR(numer_sektora), -1, 0};
-                semop(sem_id, &wait_sek, 1);
+                if (semop_retry_ctx(sem_id, &wait_sek, 1, "semop wait sektor") == -1) return;
             }
         }
 
@@ -444,14 +539,36 @@ void idz_do_bramki() {
         operacje[0].sem_num = 0;
         operacje[0].sem_op = -1;
         operacje[0].sem_flg = 0;
-        if (semop(sem_id, operacje, 1) == -1) return;
+        if (semop_retry_ctx(sem_id, operacje, 1, "semop lock bramka miejsc") == -1) return;
 
         Bramka *b = &stan_hali->bramki[numer_sektora][wybrane_stanowisko];
+
+        if (wpychanie && b->pid_agresora == 0) {
+            b->pid_agresora = getpid();
+            agresor_aktywny = 1;
+            agresor_sektor = numer_sektora;
+            agresor_stanowisko = wybrane_stanowisko;
+        }
+        if (b->pid_agresora != 0 && b->pid_agresora != getpid()) {
+            if (kill(b->pid_agresora, 0) == -1 && errno == ESRCH) {
+                b->pid_agresora = 0;
+            }
+        }
+        if (b->pid_agresora != 0 && b->pid_agresora != getpid()) {
+            operacje[0].sem_op = 1;
+            semop_retry_ctx(sem_id, operacje, 1, "semop unlock bramka miejsc");
+            struct sembuf wait_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), -1, 0};
+            if (semop_retry_ctx(sem_id, &wait_bramka, 1, "semop wait bramka") == -1) return;
+            continue;
+        }
 
         int wolne = 0;
         for(int i=0; i<3; i++) if(b->miejsca[i].pid_kibica == 0) wolne++;
 
         if (wolne > 0 && (b->obecna_druzyna == 0 || b->obecna_druzyna == moja_druzyna)) {
+            if (b->obecna_druzyna == 0) {
+                b->obecna_druzyna = moja_druzyna;
+            }
             for (int i = 0; i < 3; i++) {
                 if (b->miejsca[i].pid_kibica == 0) {
                     b->miejsca[i].druzyna = moja_druzyna;
@@ -462,57 +579,58 @@ void idz_do_bramki() {
                     moje_miejsce = i;
                     przepuszczeni = 0;
                     struct sembuf sig_praca = {SEM_PRACA(numer_sektora), 1, 0};
-                    semop(sem_id, &sig_praca, 1);
+                    semop_retry_ctx(sem_id, &sig_praca, 1, "semop sig praca");
+                    if (b->pid_agresora == getpid()) {
+                        b->pid_agresora = 0;
+                        agresor_aktywny = 0;
+                    }
                     break;
                 }
             }
         } else {
-            przepuszczeni++;
-
-            if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
-                printf("%sKibic %d: FRUSTRACJA! Przepuscilem juz %d osob! Wpycham sie!%s\n",
-                       KOLOR_CZERWONY, getpid(), przepuszczeni, KOLOR_RESET);
-                rejestr_log("KIBIC", "PID %d frustracja po %d przepuszczeniach", getpid(), przepuszczeni);
-                proba_vip = 1;
-                operacje[0].sem_op = 1;
-                semop(sem_id, operacje, 1);
-                break;
-            } else if (przepuszczeni > 0 && przepuszczeni % 2 == 0) {
-                printf("Kibic %d: Przepuscilem %d/%d osob...\n",
-                       getpid(), przepuszczeni, MAX_PRZEPUSZCZEN);
+            if (!wpychanie) {
+                przepuszczeni++;
+                if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
+                    printf("%sKibic %d: FRUSTRACJA! Przepuscilem %d osob! WPYCHAM SIE!%s\n",
+                           KOLOR_CZERWONY, getpid(), przepuszczeni, KOLOR_RESET);
+                    rejestr_log("KIBIC", "PID %d frustracja po %d przepuszczeniach", getpid(), przepuszczeni);
+                    wpychanie = 1;
+                    if (b->pid_agresora == 0) {
+                        b->pid_agresora = getpid();
+                        agresor_aktywny = 1;
+                        agresor_sektor = numer_sektora;
+                        agresor_stanowisko = wybrane_stanowisko;
+                    }
+                } else if (przepuszczeni > 0 && przepuszczeni % 2 == 0) {
+                    printf("Kibic %d: Przepuscilem %d/%d osob...\n",
+                           getpid(), przepuszczeni, MAX_PRZEPUSZCZEN);
+                }
             }
         }
 
         operacje[0].sem_op = 1;
-        semop(sem_id, operacje, 1);
+        if (semop_retry_ctx(sem_id, operacje, 1, "semop unlock bramka miejsc") == -1) return;
 
-        if (moje_miejsce == -1 && !proba_vip) {
+        if (moje_miejsce == -1) {
             struct sembuf wait_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), -1, 0};
-            if (semop(sem_id, &wait_bramka, 1) == -1) {
-                if (errno == EINTR) continue;
-                return;
-            }
+            if (semop_retry_ctx(sem_id, &wait_bramka, 1, "semop wait bramka") == -1) return;
         }
     }
 
-    if (!proba_vip) {
-        printf("Kibic %d: Czekam na kontrole na stanowisku %d...\n",
-               getpid(), wybrane_stanowisko);
+    printf("Kibic %d: Czekam na kontrole na stanowisku %d...\n",
+           getpid(), wybrane_stanowisko);
 
         while (1) {
             if (stan_hali->ewakuacja_trwa) return;
 
             if (stan_hali->sektor_zablokowany[numer_sektora]) {
                 struct sembuf wait_sek = {SEM_SEKTOR(numer_sektora), -1, 0};
-                semop(sem_id, &wait_sek, 1);
+                if (semop_retry_ctx(sem_id, &wait_sek, 1, "semop wait sektor") == -1) return;
                 continue;
             }
 
             struct sembuf wait_slot = {SEM_SLOT(numer_sektora, wybrane_stanowisko, moje_miejsce), -1, 0};
-            if (semop(sem_id, &wait_slot, 1) == -1) {
-                if (errno == EINTR) continue;
-                return;
-            }
+            if (semop_retry_ctx(sem_id, &wait_slot, 1, "semop wait slot") == -1) return;
 
             int zgoda = stan_hali->bramki[numer_sektora][wybrane_stanowisko]
                        .miejsca[moje_miejsce].zgoda_na_wejscie;
@@ -521,46 +639,46 @@ void idz_do_bramki() {
                 printf("%sKibic %d: Zostalem wyrzucony - znaleziono noz!%s\n",
                        KOLOR_CZERWONY, getpid(), KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d wyrzucony - noz", getpid());
-                struct sembuf op = {0, -1, 0};
-                semop(sem_id, &op, 1);
-                memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
-                       .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
-                op.sem_op = 1;
-                semop(sem_id, &op, 1);
+                wyczysc_slot(numer_sektora, wybrane_stanowisko, moje_miejsce);
                 struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
-                semop(sem_id, &sig_bramka, 1);
+                semop_retry_ctx(sem_id, &sig_bramka, 1, "semop sig bramka");
                 return;
             } else if (zgoda == 3) {
                 printf("%sKibic %d: Zawrocony - za mlody bez opiekuna!%s\n",
                        KOLOR_ZOLTY, getpid(), KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d zawrocony - wiek", getpid());
-                struct sembuf op = {0, -1, 0};
-                semop(sem_id, &op, 1);
-                memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
-                       .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
-                op.sem_op = 1;
-                semop(sem_id, &op, 1);
+                wyczysc_slot(numer_sektora, wybrane_stanowisko, moje_miejsce);
                 struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
-                semop(sem_id, &sig_bramka, 1);
+                semop_retry_ctx(sem_id, &sig_bramka, 1, "semop sig bramka");
                 return;
             } else if (zgoda == 4) {
                 printf("%sKibic %d: Przepuszczony - zla druzyna, wracam do kolejki%s\n",
                        KOLOR_ZOLTY, getpid(), KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d przepuszczony - zla druzyna", getpid());
-                struct sembuf op = {0, -1, 0};
-                semop(sem_id, &op, 1);
-                memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
-                       .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
-                op.sem_op = 1;
-                semop(sem_id, &op, 1);
+                wyczysc_slot(numer_sektora, wybrane_stanowisko, moje_miejsce);
                 struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
-                semop(sem_id, &sig_bramka, 1);
-                przepuszczeni++;
-                if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
-                    printf("%sKibic %d: FRUSTRACJA po przepuszczeniu! Wpycham sie!%s\n",
-                           KOLOR_CZERWONY, getpid(), KOLOR_RESET);
-                    rejestr_log("KIBIC", "PID %d frustracja po przepuszczeniu", getpid());
-                    proba_vip = 1;
+                semop_retry_ctx(sem_id, &sig_bramka, 1, "semop sig bramka");
+                if (!wpychanie) {
+                    przepuszczeni++;
+                    if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
+                        printf("%sKibic %d: FRUSTRACJA po przepuszczeniu! WPYCHAM SIE!%s\n",
+                               KOLOR_CZERWONY, getpid(), KOLOR_RESET);
+                        rejestr_log("KIBIC", "PID %d frustracja po przepuszczeniu", getpid());
+                        wpychanie = 1;
+                        if (agresor_aktywny == 0) {
+                            struct sembuf op = {0, -1, 0};
+                            if (semop_retry_ctx(sem_id, &op, 1, "semop lock agresor set") == -1) return;
+                            Bramka *b = &stan_hali->bramki[numer_sektora][wybrane_stanowisko];
+                            if (b->pid_agresora == 0) {
+                                b->pid_agresora = getpid();
+                                agresor_aktywny = 1;
+                                agresor_sektor = numer_sektora;
+                                agresor_stanowisko = wybrane_stanowisko;
+                            }
+                            op.sem_op = 1;
+                            semop_retry_ctx(sem_id, &op, 1, "semop unlock agresor set");
+                        }
+                    }
                 }
                 retry_bramka = 1;
                 break;
@@ -568,66 +686,47 @@ void idz_do_bramki() {
                 printf("%sKibic %d: Mecz zakonczony - nie moge wejsc.%s\n",
                        KOLOR_ZOLTY, getpid(), KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d odrzucony - mecz zakonczony", getpid());
-                struct sembuf op = {0, -1, 0};
-                semop(sem_id, &op, 1);
-                memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
-                       .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
-                op.sem_op = 1;
-                semop(sem_id, &op, 1);
+                wyczysc_slot(numer_sektora, wybrane_stanowisko, moje_miejsce);
                 struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
-                semop(sem_id, &sig_bramka, 1);
+                semop_retry_ctx(sem_id, &sig_bramka, 1, "semop sig bramka");
                 return;
             } else if (zgoda == 1) {
                 break;
             }
         }
 
-        if (!retry_bramka) {
-            struct sembuf op = {0, -1, 0};
-            semop(sem_id, &op, 1);
-            memset(&stan_hali->bramki[numer_sektora][wybrane_stanowisko]
-                   .miejsca[moje_miejsce], 0, sizeof(MiejscaKolejki));
-            op.sem_op = 1;
-            semop(sem_id, &op, 1);
-            struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
-            semop(sem_id, &sig_bramka, 1);
-        }
+    if (!retry_bramka) {
+        wyczysc_slot(numer_sektora, wybrane_stanowisko, moje_miejsce);
+        struct sembuf sig_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), 1, 0};
+        semop_retry_ctx(sem_id, &sig_bramka, 1, "semop sig bramka");
     }
-    }
-
-    if (proba_vip) {
-        if (mam_noz) {
-             printf("%sKibic %d (AGRESOR): Ochrona znalazla noz!%s\n",
-                    KOLOR_CZERWONY, getpid(), KOLOR_RESET);
-             rejestr_log("KIBIC", "PID %d agresor wyrzucony - noz", getpid());
-             return;
-        }
-        if (moj_wiek < 15) {
-             printf("%sKibic %d (AGRESOR): Za mlody bez opiekuna!%s\n",
-                    KOLOR_ZOLTY, getpid(), KOLOR_RESET);
-             rejestr_log("KIBIC", "PID %d agresor wyrzucony - wiek", getpid());
-             return;
-        }
     }
 
     struct sembuf op = {0, -1, 0};
-    semop(sem_id, &op, 1);
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock wejscie") == -1) return;
     stan_hali->suma_kibicow_w_hali++;
     stan_hali->osoby_w_sektorze[numer_sektora]++;
     op.sem_op = 1;
-    semop(sem_id, &op, 1);
+    if (semop_retry_ctx(sem_id, &op, 1, "semop unlock wejscie") == -1) return;
 
     jestem_w_hali = 1;
-    printf("%sKibic %d: Wszedlem na sektor %d! Ogladam mecz...%s\n",
+    printf("%sKibic %d: Wszedlem na sektor %d.%s\n",
            KOLOR_ZIELONY, getpid(), numer_sektora, KOLOR_RESET);
     rejestr_log("KIBIC", "PID %d wszedl na sektor %d", getpid(), numer_sektora);
 
+    if (stan_hali->faza_meczu == FAZA_PRZED_MECZEM) {
+        printf("Kibic %d: Czekam na start meczu.\n", getpid());
+        rejestr_log("KIBIC", "PID %d czeka na start meczu", getpid());
+        struct sembuf wait_start = {SEM_START_MECZU, 0, 0};
+        if (semop_retry_ctx(sem_id, &wait_start, 1, "semop wait start") == -1) return;
+    }
+
+    printf("Kibic %d: Ogladam mecz...\n", getpid());
+    rejestr_log("KIBIC", "PID %d oglada mecz", getpid());
+
     while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie && !stan_hali->ewakuacja_trwa) {
         struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
-        if (semop(sem_id, &wait_faza, 1) == -1) {
-            if (errno == EINTR) continue;
-            break;
-        }
+        if (semop_retry_ctx(sem_id, &wait_faza, 1, "semop wait faza") == -1) return;
     }
 
     if (ewakuacja_mnie || stan_hali->ewakuacja_trwa) {
@@ -636,17 +735,17 @@ void idz_do_bramki() {
     }
 
     op.sem_op = -1;
-    semop(sem_id, &op, 1);
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock wyjscie") == -1) return;
     stan_hali->suma_kibicow_w_hali--;
     stan_hali->osoby_w_sektorze[numer_sektora]--;
     if (stan_hali->osoby_w_sektorze[numer_sektora] < 0) {
         stan_hali->osoby_w_sektorze[numer_sektora] = 0;
     }
     op.sem_op = 1;
-    semop(sem_id, &op, 1);
+    if (semop_retry_ctx(sem_id, &op, 1, "semop unlock wyjscie") == -1) return;
 
     struct sembuf sig_wyszedl = {SEM_KIBIC_WYSZEDL, 1, 0};
-    semop(sem_id, &sig_wyszedl, 1);
+    semop_retry_ctx(sem_id, &sig_wyszedl, 1, "semop sig wyszedl");
 
     jestem_w_hali = 0;
     printf("Kibic %d: Wychodze z hali.\n", getpid());
@@ -743,20 +842,26 @@ int main(int argc, char *argv[]) {
                 pid_partnera = pid_dziecka;
 
                 struct sembuf op = {0, -1, 0};
-                semop(sem_id, &op, 1);
+                if (semop_retry_ctx(sem_id, &op, 1, "semop lock rodzina upd") == -1) {
+                    return 0;
+                }
                 if (id_rodziny >= 0) {
                     stan_hali->rejestr_rodzin.rodziny[id_rodziny].pid_dziecka = pid_dziecka;
                     stan_hali->rejestr_rodzin.rodziny[id_rodziny].sektor = numer_sektora;
                 }
                 op.sem_op = 1;
-                semop(sem_id, &op, 1);
+                semop_retry_ctx(sem_id, &op, 1, "semop unlock rodzina upd");
 
                 printf("%sKibic %d (RODZIC): Utworzono dziecko PID %d%s\n",
                        KOLOR_CYAN, getpid(), pid_dziecka, KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d rodzic utworzyl dziecko %d", getpid(), pid_dziecka);
 
                 idz_do_bramki();
-                waitpid(pid_dziecka, NULL, 0);
+                if (waitpid(pid_dziecka, NULL, 0) == -1) {
+                    perror("waitpid dziecko");
+                }
+            } else {
+                perror("fork dziecko");
             }
         }
     } else {
@@ -799,7 +904,11 @@ int main(int argc, char *argv[]) {
                            KOLOR_ZIELONY, getpid(), pid_kolegi, KOLOR_RESET);
                     rejestr_log("KIBIC", "PID %d przekazal bilet koledze %d", getpid(), pid_kolegi);
                     idz_do_bramki();
-                    waitpid(pid_kolegi, NULL, 0);
+                    if (waitpid(pid_kolegi, NULL, 0) == -1) {
+                        perror("waitpid kolega");
+                    }
+                } else {
+                    perror("fork kolega");
                 }
             } else {
                 idz_do_bramki();

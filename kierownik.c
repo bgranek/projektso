@@ -7,10 +7,14 @@ StanHali *stan_hali = NULL;
 
 void obsluga_wyjscia() {
     if (fifo_fd != -1) {
-        close(fifo_fd);
+        if (close(fifo_fd) == -1) {
+            perror("close FIFO kierownik");
+        }
     }
     if (stan_hali != NULL) {
-        shmdt(stan_hali);
+        if (shmdt(stan_hali) == -1) {
+            perror("shmdt kierownik");
+        }
     }
 }
 
@@ -39,7 +43,7 @@ void inicjalizuj() {
         exit(EXIT_FAILURE);
     }
 
-    fifo_fd = open(FIFO_PRACOWNIK_KIEROWNIK, O_RDONLY | O_NONBLOCK);
+    fifo_fd = open(FIFO_PRACOWNIK_KIEROWNIK, O_RDWR);
     if (fifo_fd == -1) {
         perror("open FIFO (kierownik)");
     } else {
@@ -49,28 +53,43 @@ void inicjalizuj() {
     rejestr_init(NULL, 0);
 }
 
-void sprawdz_zgloszenia_fifo() {
-    if (fifo_fd == -1) return;
+void* watek_fifo(void *arg) {
+    (void)arg;
+    if (fifo_fd == -1) return NULL;
 
-    KomunikatFifo kom;
-    ssize_t odczytano;
+    while (1) {
+        KomunikatFifo kom;
+        size_t offset = 0;
+        while (offset < sizeof(KomunikatFifo)) {
+            ssize_t r = read(fifo_fd, (char*)&kom + offset, sizeof(KomunikatFifo) - offset);
+            if (r == -1) {
+                if (errno == EINTR) continue;
+                perror("read FIFO");
+                return NULL;
+            }
+            if (r == 0) continue;
+            offset += (size_t)r;
+        }
 
-    while ((odczytano = read(fifo_fd, &kom, sizeof(KomunikatFifo))) > 0) {
-        if (odczytano == sizeof(KomunikatFifo)) {
-            printf("\n%s", KOLOR_CYAN);
-            printf("+========================================+\n");
-            printf("|       ZGLOSZENIE OD PRACOWNIKA         |\n");
-            printf("+========================================+\n");
-            printf("| Sektor: %d\n", kom.nr_sektora);
-            printf("| PID pracownika: %d\n", kom.pid_pracownika);
-            printf("| Typ: %s\n", kom.typ == 1 ? "EWAKUACJA ZAKONCZONA" : "INNE");
-            printf("| Wiadomosc: %s\n", kom.wiadomosc);
-            printf("+========================================+\n");
-            printf("%s\n", KOLOR_RESET);
+        printf("\n%s", KOLOR_CYAN);
+        printf("+========================================+\n");
+        printf("|       ZGLOSZENIE OD PRACOWNIKA         |\n");
+        printf("+========================================+\n");
+        printf("| Sektor: %d\n", kom.nr_sektora);
+        printf("| PID pracownika: %d\n", kom.pid_pracownika);
+        printf("| Typ: %s\n", kom.typ == 1 ? "EWAKUACJA ZAKONCZONA" : "INNE");
+        printf("| Wiadomosc: %s\n", kom.wiadomosc);
+        printf("+========================================+\n");
+        printf("%s\n", KOLOR_RESET);
 
-            rejestr_log("KIEROWNIK", "Zgloszenie od sektora %d: %s", kom.nr_sektora, kom.wiadomosc);
+        rejestr_log("KIEROWNIK", "Zgloszenie od sektora %d: %s", kom.nr_sektora, kom.wiadomosc);
 
-            if (kom.typ == 1) {
+        if (kom.typ == 1) {
+            struct sembuf lock = {0, -1, 0};
+            struct sembuf unlock = {0, 1, 0};
+            if (semop(sem_id, &lock, 1) == -1) {
+                if (errno != EINTR) perror("semop lock ewakuacja");
+            } else {
                 stan_hali->sektor_ewakuowany[kom.nr_sektora] = 1;
 
                 int wszystkie = 1;
@@ -86,11 +105,18 @@ void sprawdz_zgloszenia_fifo() {
                     rejestr_log("KIEROWNIK", "Wszystkie sektory ewakuowane - hala pusta");
                     stan_hali->ewakuacja_trwa = 0;
                     struct sembuf sig_ewak = {SEM_EWAKUACJA_KONIEC, 1, 0};
-                    semop(sem_id, &sig_ewak, 1);
+                    if (semop(sem_id, &sig_ewak, 1) == -1) {
+                        perror("semop SEM_EWAKUACJA_KONIEC");
+                    }
+                }
+
+                if (semop(sem_id, &unlock, 1) == -1) {
+                    perror("semop unlock ewakuacja");
                 }
             }
         }
     }
+    return NULL;
 }
 
 void pokaz_status() {
@@ -267,6 +293,13 @@ int main() {
 
     inicjalizuj();
 
+    pthread_t watek_fifo_id;
+    if (pthread_create(&watek_fifo_id, NULL, watek_fifo, NULL) != 0) {
+        perror("pthread_create fifo");
+    } else {
+        pthread_detach(watek_fifo_id);
+    }
+
     printf("\n%s", KOLOR_BOLD);
     printf("+=======================================+\n");
     printf("|        PANEL KIEROWNIKA HALI          |\n");
@@ -279,8 +312,6 @@ int main() {
     rejestr_log("KIEROWNIK", "Start PID %d", getpid());
 
     while (1) {
-        sprawdz_zgloszenia_fifo();
-
         printf("\n+-------------------------------+\n");
         printf("|        MENU KIEROWNIKA        |\n");
         printf("+-------------------------------+\n");
@@ -319,7 +350,6 @@ int main() {
                 printf("Nieznana opcja.\n");
         }
 
-        usleep(100000);
     }
 
     return 0;

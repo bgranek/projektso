@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <pthread.h>
+#include <sys/file.h>
 
 #define REJESTR_PLIK "symulacja.log"
 #define REJESTR_BUFOR 512
@@ -23,13 +24,17 @@ static inline int rejestr_init(const char *nazwa_pliku, int truncate) {
     }
 
     if (truncate) {
-        int tmp_fd = creat(nazwa_pliku, 0644);
-        if (tmp_fd != -1) {
-            close(tmp_fd);
+        int tmp_fd = creat(nazwa_pliku, 0600);
+        if (tmp_fd == -1) {
+            perror("creat rejestr");
+        } else {
+            if (close(tmp_fd) == -1) {
+                perror("close rejestr tmp");
+            }
         }
     }
 
-    rejestr_fd = open(nazwa_pliku, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    rejestr_fd = open(nazwa_pliku, O_WRONLY | O_APPEND | O_CREAT, 0600);
     if (rejestr_fd == -1) {
         perror("open rejestr");
         return -1;
@@ -47,7 +52,15 @@ static inline int rejestr_init(const char *nazwa_pliku, int truncate) {
             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
             t->tm_hour, t->tm_min, t->tm_sec);
 
-        write(rejestr_fd, naglowek, len);
+        if (flock(rejestr_fd, LOCK_EX) == -1) {
+            perror("flock lock rejestr");
+        }
+        if (write(rejestr_fd, naglowek, len) == -1) {
+            perror("write rejestr");
+        }
+        if (flock(rejestr_fd, LOCK_UN) == -1) {
+            perror("flock unlock rejestr");
+        }
     }
 
     return 0;
@@ -65,9 +78,19 @@ static inline void rejestr_zamknij() {
             "========================================\n",
             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
             t->tm_hour, t->tm_min, t->tm_sec);
-        
-        write(rejestr_fd, stopka, len);
-        close(rejestr_fd);
+
+        if (flock(rejestr_fd, LOCK_EX) == -1) {
+            perror("flock lock rejestr");
+        }
+        if (write(rejestr_fd, stopka, len) == -1) {
+            perror("write rejestr");
+        }
+        if (flock(rejestr_fd, LOCK_UN) == -1) {
+            perror("flock unlock rejestr");
+        }
+        if (close(rejestr_fd) == -1) {
+            perror("close rejestr");
+        }
         rejestr_fd = -1;
     }
 }
@@ -76,6 +99,9 @@ static inline void rejestr_log(const char *kategoria, const char *format, ...) {
     if (rejestr_fd == -1) return;
     
     pthread_mutex_lock(&rejestr_mutex);
+    if (flock(rejestr_fd, LOCK_EX) == -1) {
+        perror("flock lock rejestr");
+    }
     
     char bufor[REJESTR_BUFOR];
     char wiadomosc[REJESTR_BUFOR];
@@ -95,7 +121,13 @@ static inline void rejestr_log(const char *kategoria, const char *format, ...) {
     int len = snprintf(bufor, sizeof(bufor), "%s [%-10s] [PID:%-6d] %s\n",
                        znacznik, kategoria, getpid(), wiadomosc);
     
-    write(rejestr_fd, bufor, len);
+    if (write(rejestr_fd, bufor, len) == -1) {
+        perror("write rejestr");
+    }
+
+    if (flock(rejestr_fd, LOCK_UN) == -1) {
+        perror("flock unlock rejestr");
+    }
     
     pthread_mutex_unlock(&rejestr_mutex);
 }
@@ -104,6 +136,9 @@ static inline void rejestr_statystyki(int pojemnosc, int kibicow, int vip, int l
     if (rejestr_fd == -1) return;
     
     pthread_mutex_lock(&rejestr_mutex);
+    if (flock(rejestr_fd, LOCK_EX) == -1) {
+        perror("flock lock rejestr");
+    }
     
     char bufor[REJESTR_BUFOR];
     time_t teraz = time(NULL);
@@ -114,7 +149,13 @@ static inline void rejestr_statystyki(int pojemnosc, int kibicow, int vip, int l
         t->tm_hour, t->tm_min, t->tm_sec,
         pojemnosc, kibicow, vip, limit_vip);
     
-    write(rejestr_fd, bufor, len);
+    if (write(rejestr_fd, bufor, len) == -1) {
+        perror("write rejestr");
+    }
+
+    if (flock(rejestr_fd, LOCK_UN) == -1) {
+        perror("flock unlock rejestr");
+    }
     
     pthread_mutex_unlock(&rejestr_mutex);
 }
@@ -123,6 +164,9 @@ static inline void rejestr_sektor(int nr, int zajete, int pojemnosc, int zabloko
     if (rejestr_fd == -1) return;
     
     pthread_mutex_lock(&rejestr_mutex);
+    if (flock(rejestr_fd, LOCK_EX) == -1) {
+        perror("flock lock rejestr");
+    }
     
     char bufor[REJESTR_BUFOR];
     time_t teraz = time(NULL);
@@ -134,7 +178,13 @@ static inline void rejestr_sektor(int nr, int zajete, int pojemnosc, int zabloko
         nr, zajete, pojemnosc,
         zablokowany ? "ZABLOKOWANY" : "AKTYWNY");
     
-    write(rejestr_fd, bufor, len);
+    if (write(rejestr_fd, bufor, len) == -1) {
+        perror("write rejestr");
+    }
+
+    if (flock(rejestr_fd, LOCK_UN) == -1) {
+        perror("flock unlock rejestr");
+    }
     
     pthread_mutex_unlock(&rejestr_mutex);
 }

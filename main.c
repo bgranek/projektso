@@ -10,9 +10,15 @@ StanHali *stan_hali = NULL;
 int pojemnosc_K = POJEMNOSC_DOMYSLNA;
 int czas_do_meczu = CZAS_DO_MECZU_DOMYSLNY;
 int czas_trwania_meczu = CZAS_TRWANIA_MECZU_DOMYSLNY;
+volatile sig_atomic_t main_dziala = 1;
+volatile sig_atomic_t shutdown_request = 0;
 
 void usun_fifo() {
-    unlink(FIFO_PRACOWNIK_KIEROWNIK);
+    if (unlink(FIFO_PRACOWNIK_KIEROWNIK) == -1) {
+        if (errno != ENOENT) {
+            perror("unlink FIFO");
+        }
+    }
 }
 
 void sprzataj_zasoby() {
@@ -25,20 +31,28 @@ void sprzataj_zasoby() {
             stan_hali->liczba_vip,
             stan_hali->limit_vip
         );
-        shmdt(stan_hali);
+        if (shmdt(stan_hali) == -1) {
+            perror("shmdt main");
+        }
     }
     if (shm_id != -1) {
-        shmctl(shm_id, IPC_RMID, NULL);
+        if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
+            perror("shmctl IPC_RMID");
+        }
         printf("MAIN: Usunieto pamiec dzielona.\n");
         rejestr_log("MAIN", "Usunieto pamiec dzielona");
     }
     if (sem_id != -1) {
-        semctl(sem_id, 0, IPC_RMID);
+        if (semctl(sem_id, 0, IPC_RMID) == -1) {
+            perror("semctl IPC_RMID");
+        }
         printf("MAIN: Usunieto semafory.\n");
         rejestr_log("MAIN", "Usunieto semafory");
     }
     if (msg_id != -1) {
-        msgctl(msg_id, IPC_RMID, NULL);
+        if (msgctl(msg_id, IPC_RMID, NULL) == -1) {
+            perror("msgctl IPC_RMID");
+        }
         printf("MAIN: Usunieto kolejke komunikatow.\n");
         rejestr_log("MAIN", "Usunieto kolejke komunikatow");
     }
@@ -51,20 +65,14 @@ void sprzataj_zasoby() {
 
 void obsluga_sygnalow(int sig) {
     (void)sig;
-    printf("\nMAIN: Otrzymano sygnal zakonczenia. Sprzatanie...\n");
-    rejestr_log("MAIN", "Otrzymano sygnal zakonczenia");
-    signal(SIGTERM, SIG_IGN);
-    kill(0, SIGTERM);
-    while (wait(NULL) > 0);
-    sprzataj_zasoby();
-    printf("MAIN: Symulacja zakonczona. Zasoby posprzatane.\n");
-    exit(0);
+    shutdown_request = 1;
+    main_dziala = 0;
 }
 
 void utworz_fifo() {
     unlink(FIFO_PRACOWNIK_KIEROWNIK);
 
-    if (mkfifo(FIFO_PRACOWNIK_KIEROWNIK, 0666) == -1) {
+    if (mkfifo(FIFO_PRACOWNIK_KIEROWNIK, 0600) == -1) {
         if (errno != EEXIST) {
             perror("mkfifo");
             exit(EXIT_FAILURE);
@@ -82,7 +90,16 @@ void inicjalizuj_zasoby() {
     key_t klucz_msg = ftok(".", KLUCZ_MSG);
     SPRAWDZ(klucz_msg);
 
-    shm_id = shmget(klucz_shm, sizeof(StanHali), IPC_CREAT | 0600);
+    shm_id = shmget(klucz_shm, sizeof(StanHali), IPC_CREAT | IPC_EXCL | 0600);
+    if (shm_id == -1 && errno == EEXIST) {
+        int stary = shmget(klucz_shm, sizeof(StanHali), 0600);
+        if (stary != -1) {
+            if (shmctl(stary, IPC_RMID, NULL) == -1) {
+                perror("shmctl stary");
+            }
+        }
+        shm_id = shmget(klucz_shm, sizeof(StanHali), IPC_CREAT | 0600);
+    }
     SPRAWDZ(shm_id);
 
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
@@ -98,7 +115,8 @@ void inicjalizuj_zasoby() {
     stan_hali->limit_vip = (pojemnosc_K * 3) / 1000;
     stan_hali->pojemnosc_vip = stan_hali->limit_vip;
 
-    stan_hali->pid_kierownika = getpid();
+    stan_hali->pid_main = getpid();
+    stan_hali->pid_kierownika = 0;
     stan_hali->liczba_vip = 0;
     stan_hali->wszystkie_bilety_sprzedane = 0;
 
@@ -122,11 +140,22 @@ void inicjalizuj_zasoby() {
     rejestr_log("MAIN", "Czas do meczu: %d s, czas trwania: %d s",
                 stan_hali->czas_do_meczu, stan_hali->czas_trwania_meczu);
 
+    stan_hali->aktywne_kasy = 2;
     for (int i = 0; i < LICZBA_KAS; i++) {
-        stan_hali->kasa_aktywna[i] = (i < 2) ? 1 : 0;
+        stan_hali->kasa_aktywna[i] = (i < stan_hali->aktywne_kasy) ? 1 : 0;
+        stan_hali->kasa_zamykanie[i] = 0;
     }
 
-    sem_id = semget(klucz_sem, SEM_TOTAL, IPC_CREAT | 0600);
+    sem_id = semget(klucz_sem, SEM_TOTAL, IPC_CREAT | IPC_EXCL | 0600);
+    if (sem_id == -1 && errno == EEXIST) {
+        int stary = semget(klucz_sem, 0, 0600);
+        if (stary != -1) {
+            if (semctl(stary, 0, IPC_RMID) == -1) {
+                perror("semctl stary");
+            }
+        }
+        sem_id = semget(klucz_sem, SEM_TOTAL, IPC_CREAT | 0600);
+    }
     SPRAWDZ(sem_id);
 
     if (semctl(sem_id, 0, SETVAL, 1) == -1) {
@@ -144,12 +173,192 @@ void inicjalizuj_zasoby() {
         }
     }
 
-    msg_id = msgget(klucz_msg, IPC_CREAT | 0600);
+    if (semctl(sem_id, SEM_START_MECZU, SETVAL, 1) == -1) {
+        perror("semctl init start meczu");
+        exit(EXIT_FAILURE);
+    }
+
+    msg_id = msgget(klucz_msg, IPC_CREAT | IPC_EXCL | 0600);
+    if (msg_id == -1 && errno == EEXIST) {
+        int stary = msgget(klucz_msg, 0600);
+        if (stary != -1) {
+            if (msgctl(stary, IPC_RMID, NULL) == -1) {
+                perror("msgctl stary");
+            }
+        }
+        msg_id = msgget(klucz_msg, IPC_CREAT | 0600);
+    }
     SPRAWDZ(msg_id);
 
     utworz_fifo();
 
     rejestr_log("MAIN", "Zasoby IPC zainicjalizowane");
+}
+
+static void zakoncz_symulacje(const char *powod) {
+    if (powod != NULL) {
+        printf("MAIN: %s\n", powod);
+        rejestr_log("MAIN", "%s", powod);
+    }
+
+    signal(SIGTERM, SIG_IGN);
+    if (kill(0, SIGTERM) == -1) {
+        perror("kill SIGTERM");
+    }
+
+    for (int s = 0; s < LICZBA_SEKTOROW; s++) {
+        struct sembuf wake_workers = {SEM_PRACA(s), 10, 0};
+        if (semop(sem_id, &wake_workers, 1) == -1) {
+            perror("semop wake workers");
+        }
+    }
+
+    for (int k = 0; k < LICZBA_KAS; k++) {
+        struct sembuf wake_kasa = {SEM_KASA(k), 10, 0};
+        if (semop(sem_id, &wake_kasa, 1) == -1) {
+            perror("semop wake kasa");
+        }
+    }
+
+    struct sembuf wake_mutex = {0, 20, 0};
+    if (semop(sem_id, &wake_mutex, 1) == -1) {
+        perror("semop wake mutex");
+    }
+
+    while (1) {
+        pid_t w = wait(NULL);
+        if (w > 0) continue;
+        if (w == -1 && errno == EINTR) continue;
+        if (w == -1 && errno != ECHILD) {
+            perror("wait");
+        }
+        break;
+    }
+    sprzataj_zasoby();
+    printf("MAIN: Symulacja zakonczona.\n");
+    exit(0);
+}
+
+static void sleep_cale(int sekundy) {
+    struct timespec ts;
+    ts.tv_sec = sekundy;
+    ts.tv_nsec = 0;
+    while (nanosleep(&ts, &ts) == -1) {
+        if (errno != EINTR) {
+            perror("nanosleep");
+            break;
+        }
+        if (!main_dziala) return;
+    }
+}
+
+void* watek_czasu_meczu(void *arg) {
+    (void)arg;
+
+    sleep_cale(stan_hali->czas_do_meczu);
+    if (!main_dziala) return NULL;
+
+    struct sembuf lock = {0, -1, 0};
+    struct sembuf unlock = {0, 1, 0};
+    if (semop(sem_id, &lock, 1) == -1) {
+        perror("semop lock faza start");
+        return NULL;
+    }
+
+    if (stan_hali->faza_meczu == FAZA_PRZED_MECZEM) {
+        stan_hali->faza_meczu = FAZA_MECZ;
+    }
+
+    if (semop(sem_id, &unlock, 1) == -1) {
+        perror("semop unlock faza start");
+        return NULL;
+    }
+
+    if (semctl(sem_id, SEM_START_MECZU, SETVAL, 0) == -1) {
+        perror("semctl start meczu");
+    }
+
+    time_t czas_rozpoczecia_meczu = time(NULL);
+    printf("\n%s", KOLOR_BOLD);
+    printf("+===============================================+\n");
+    printf("|          MECZ ROZPOCZETY!                     |\n");
+    printf("+===============================================+\n");
+    printf("%s\n", KOLOR_RESET);
+    rejestr_log("MAIN", "MECZ ROZPOCZETY - kibicow w hali: %d",
+               stan_hali->suma_kibicow_w_hali);
+
+    sleep_cale(stan_hali->czas_trwania_meczu);
+    if (!main_dziala) return NULL;
+
+    if (semop(sem_id, &lock, 1) == -1) {
+        perror("semop lock faza koniec");
+        return NULL;
+    }
+
+    if (stan_hali->faza_meczu == FAZA_MECZ) {
+        stan_hali->faza_meczu = FAZA_PO_MECZU;
+    }
+
+    if (semop(sem_id, &unlock, 1) == -1) {
+        perror("semop unlock faza koniec");
+        return NULL;
+    }
+
+    struct sembuf sig_faza = {SEM_FAZA_MECZU, 10000, 0};
+    if (semop(sem_id, &sig_faza, 1) == -1) {
+        perror("semop SEM_FAZA_MECZU");
+    }
+
+    printf("\n%s", KOLOR_BOLD);
+    printf("+===============================================+\n");
+    printf("|          MECZ ZAKONCZONY!                     |\n");
+    printf("+===============================================+\n");
+    printf("%s\n", KOLOR_RESET);
+    rejestr_log("MAIN", "MECZ ZAKONCZONY po %ld s",
+               (long)(time(NULL) - czas_rozpoczecia_meczu));
+
+    return NULL;
+}
+
+void* watek_generator_kibicow(void *arg) {
+    (void)arg;
+    unsigned int seed = (unsigned int)time(NULL) ^ (unsigned int)getpid();
+
+    while (main_dziala) {
+        if (stan_hali->faza_meczu == FAZA_PO_MECZU) break;
+
+        if (stan_hali->ewakuacja_trwa) {
+            struct sembuf wait_ewak = {SEM_EWAKUACJA_KONIEC, -1, 0};
+            if (semop(sem_id, &wait_ewak, 1) == -1) {
+                if (errno == EINTR) continue;
+                perror("semop SEM_EWAKUACJA_KONIEC");
+                break;
+            }
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid == 0) {
+            execl("./kibic", "kibic", NULL);
+            perror("execl kibic");
+            _exit(EXIT_FAILURE);
+        } else if (pid < 0) {
+            perror("fork kibic");
+        }
+
+        int opoznienie = (rand_r(&seed) % 100000) + 25000;
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = opoznienie * 1000;
+        while (nanosleep(&ts, &ts) == -1) {
+            if (errno != EINTR) {
+                perror("nanosleep");
+                break;
+            }
+        }
+    }
+
+    return NULL;
 }
 
 void* watek_serwera_socket(void *arg) {
@@ -161,10 +370,14 @@ void* watek_serwera_socket(void *arg) {
         return NULL;
     }
 
-    fcntl(server_fd, F_SETFD, FD_CLOEXEC);
+    if (fcntl(server_fd, F_SETFD, FD_CLOEXEC) == -1) {
+        perror("fcntl server");
+    }
 
     int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+        perror("setsockopt");
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -174,13 +387,17 @@ void* watek_serwera_socket(void *arg) {
 
     if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
         perror("bind");
-        close(server_fd);
+        if (close(server_fd) == -1) {
+            perror("close server");
+        }
         return NULL;
     }
 
     if (listen(server_fd, 5) == -1) {
         perror("listen");
-        close(server_fd);
+        if (close(server_fd) == -1) {
+            perror("close server");
+        }
         return NULL;
     }
 
@@ -191,9 +408,12 @@ void* watek_serwera_socket(void *arg) {
         int client_fd = accept(server_fd, NULL, NULL);
         if (client_fd == -1) {
             if (errno == EINTR) continue;
+            perror("accept");
             break;
         }
-        fcntl(client_fd, F_SETFD, FD_CLOEXEC);
+        if (fcntl(client_fd, F_SETFD, FD_CLOEXEC) == -1) {
+            perror("fcntl client");
+        }
 
         char bufor[512];
         int suma_biletow = 0;
@@ -224,11 +444,17 @@ void* watek_serwera_socket(void *arg) {
             stan_hali->pojemnosc_vip,
             stan_hali->osoby_w_sektorze[SEKTOR_VIP]);
 
-        send(client_fd, bufor, strlen(bufor), 0);
-        close(client_fd);
+        if (send(client_fd, bufor, strlen(bufor), 0) == -1) {
+            perror("send");
+        }
+        if (close(client_fd) == -1) {
+            perror("close client");
+        }
     }
 
-    close(server_fd);
+    if (close(server_fd) == -1) {
+        perror("close server");
+    }
     return NULL;
 }
 
@@ -324,6 +550,7 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, obsluga_sygnalow);
     signal(SIGCHLD, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
+    signal(SYGNAL_EWAKUACJA, SIG_IGN);
 
     srand(time(NULL));
     inicjalizuj_zasoby();
@@ -333,6 +560,16 @@ int main(int argc, char *argv[]) {
         perror("pthread_create socket");
     } else {
         pthread_detach(watek_socket);
+    }
+
+    pthread_t watek_czasu;
+    if (pthread_create(&watek_czasu, NULL, watek_czasu_meczu, NULL) != 0) {
+        perror("pthread_create czas");
+    }
+
+    pthread_t watek_generator;
+    if (pthread_create(&watek_generator, NULL, watek_generator_kibicow, NULL) != 0) {
+        perror("pthread_create generator");
     }
 
     printf("\nMAIN: Uruchamianie systemu...\n");
@@ -346,122 +583,70 @@ int main(int argc, char *argv[]) {
 
     rejestr_log("MAIN", "System gotowy - rozpoczynam generowanie kibicow");
 
-    time_t czas_rozpoczecia_meczu = 0;
-
-    while(1) {
-        time_t teraz = time(NULL);
-        time_t uplynelo = teraz - stan_hali->czas_startu_symulacji;
-
-        if (stan_hali->faza_meczu == FAZA_PRZED_MECZEM) {
-            if (uplynelo >= stan_hali->czas_do_meczu) {
-                stan_hali->faza_meczu = FAZA_MECZ;
-                czas_rozpoczecia_meczu = teraz;
-                printf("\n%s", KOLOR_BOLD);
-                printf("+===============================================+\n");
-                printf("|          MECZ ROZPOCZETY!                     |\n");
-                printf("+===============================================+\n");
-                printf("%s\n", KOLOR_RESET);
-                rejestr_log("MAIN", "MECZ ROZPOCZETY - kibicow w hali: %d",
-                           stan_hali->suma_kibicow_w_hali);
-            }
-        } else if (stan_hali->faza_meczu == FAZA_MECZ) {
-            time_t czas_meczu = teraz - czas_rozpoczecia_meczu;
-            if (czas_meczu >= stan_hali->czas_trwania_meczu) {
-                stan_hali->faza_meczu = FAZA_PO_MECZU;
-                struct sembuf sig_faza = {SEM_FAZA_MECZU, 10000, 0};
-                semop(sem_id, &sig_faza, 1);
-                printf("\n%s", KOLOR_BOLD);
-                printf("+===============================================+\n");
-                printf("|          MECZ ZAKONCZONY!                     |\n");
-                printf("+===============================================+\n");
-                printf("%s\n", KOLOR_RESET);
-                rejestr_log("MAIN", "MECZ ZAKONCZONY");
-
-                printf("MAIN: Czekam az kibice opuszcza hale...\n");
-                rejestr_log("MAIN", "Czekam na wyjscie kibicow");
-
-                int timeout_wyjscia = 30;
-                while (stan_hali->suma_kibicow_w_hali > 0 && timeout_wyjscia > 0) {
-                    printf("MAIN: Pozostalo kibicow: %d (timeout: %ds)\n",
-                           stan_hali->suma_kibicow_w_hali, timeout_wyjscia);
-                    struct sembuf wait_wyjscie = {SEM_KIBIC_WYSZEDL, -1, 0};
-                    struct timespec ts = {1, 0};
-                    if (semtimedop(sem_id, &wait_wyjscie, 1, &ts) == -1) {
-                        if (errno == EAGAIN) {
-                            timeout_wyjscia--;
-                            continue;
-                        }
-                        if (errno == EINTR) continue;
-                        break;
-                    }
-                }
-
-                if (stan_hali->suma_kibicow_w_hali > 0) {
-                    printf("MAIN: Timeout - %d kibicow nie opuscilo hali.\n",
-                           stan_hali->suma_kibicow_w_hali);
-                    rejestr_log("MAIN", "Timeout - %d kibicow pozostalo",
-                               stan_hali->suma_kibicow_w_hali);
-                } else {
-                    printf("MAIN: Wszyscy kibice opuscili hale.\n");
-                    rejestr_log("MAIN", "Wszyscy kibice opuscili hale");
-                }
-
-                printf("MAIN: Zamykam symulacje.\n");
-                rejestr_log("MAIN", "Koniec symulacji po zakonczeniu meczu");
-                signal(SIGTERM, SIG_IGN);
-                kill(0, SIGTERM);
-
-                for (int s = 0; s < LICZBA_SEKTOROW; s++) {
-                    struct sembuf wake_workers = {SEM_PRACA(s), 10, 0};
-                    semop(sem_id, &wake_workers, 1);
-                }
-
-                for (int k = 0; k < LICZBA_KAS; k++) {
-                    struct sembuf wake_kasa = {SEM_KASA(k), 10, 0};
-                    semop(sem_id, &wake_kasa, 1);
-                }
-
-                struct sembuf wake_mutex = {0, 20, 0};
-                semop(sem_id, &wake_mutex, 1);
-
-                while (wait(NULL) > 0);
-                sprzataj_zasoby();
-                printf("MAIN: Symulacja zakonczona pomyslnie.\n");
-                exit(0);
-            }
-        }
-
-        if (stan_hali->ewakuacja_trwa) {
-            printf("MAIN: Ewakuacja w toku - wstrzymano generowanie kibicow.\n");
-            rejestr_log("MAIN", "Ewakuacja - wstrzymano generowanie kibicow");
-            struct sembuf wait_ewak = {SEM_EWAKUACJA_KONIEC, -1, 0};
-            struct timespec ts = {2, 0};
-            semtimedop(sem_id, &wait_ewak, 1, &ts);
+    struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
+    while (semop(sem_id, &wait_faza, 1) == -1) {
+        if (errno == EINTR) {
+            if (shutdown_request) break;
             continue;
         }
+        perror("semop wait SEM_FAZA_MECZU");
+        break;
+    }
 
-        if (stan_hali->wszystkie_bilety_sprzedane) {
-            struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
-            struct timespec ts = {1, 0};
-            semtimedop(sem_id, &wait_faza, 1, &ts);
-            continue;
+    if (shutdown_request) {
+        printf("\nMAIN: Otrzymano sygnal zakonczenia. Sprzatanie...\n");
+        rejestr_log("MAIN", "Otrzymano sygnal zakonczenia");
+        main_dziala = 0;
+        pthread_cancel(watek_generator);
+        pthread_cancel(watek_czasu);
+        pthread_join(watek_generator, NULL);
+        pthread_join(watek_czasu, NULL);
+        zakoncz_symulacje("Przerwano symulacje");
+    }
+
+    main_dziala = 0;
+
+    if (pthread_join(watek_generator, NULL) != 0) {
+        perror("pthread_join generator");
+    }
+    if (pthread_join(watek_czasu, NULL) != 0) {
+        perror("pthread_join czas");
+    }
+
+    printf("MAIN: Czekam az kibice opuszcza hale...\n");
+    rejestr_log("MAIN", "Czekam na wyjscie kibicow");
+
+    while (1) {
+        struct sembuf lock = {0, -1, 0};
+        struct sembuf unlock = {0, 1, 0};
+        if (semop(sem_id, &lock, 1) == -1) {
+            if (errno == EINTR) continue;
+            perror("semop lock suma");
+            break;
         }
 
-        pid_t pid = fork();
-        if (pid == 0) {
-            execl("./kibic", "kibic", NULL);
-            perror("execl kibic");
-            exit(EXIT_FAILURE);
-        } else if (pid < 0) {
-            perror("fork kibic");
-        }
-        usleep((rand() % 100000) + 25000);
+        int pozostalo = stan_hali->suma_kibicow_w_hali;
 
-        for (int k = 0; k < LICZBA_KAS; k++) {
-            struct sembuf wake_kasa = {SEM_KASA(k), 1, 0};
-            semop(sem_id, &wake_kasa, 1);
+        if (semop(sem_id, &unlock, 1) == -1) {
+            perror("semop unlock suma");
+            break;
+        }
+
+        if (pozostalo <= 0) {
+            printf("MAIN: Wszyscy kibice opuscili hale.\n");
+            rejestr_log("MAIN", "Wszyscy kibice opuscili hale");
+            break;
+        }
+
+        struct sembuf wait_wyjscie = {SEM_KIBIC_WYSZEDL, -1, 0};
+        if (semop(sem_id, &wait_wyjscie, 1) == -1) {
+            if (errno == EINTR) continue;
+            perror("semop wait SEM_KIBIC_WYSZEDL");
+            break;
         }
     }
+
+    zakoncz_symulacje("Koniec symulacji po zakonczeniu meczu");
 
     return 0;
 }

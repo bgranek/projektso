@@ -25,7 +25,9 @@ void obsluga_wyjscia() {
 
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->pidy_pracownikow[id_sektora] = 0;
-        shmdt(stan_hali);
+        if (shmdt(stan_hali) == -1) {
+            perror("shmdt pracownik");
+        }
     }
 }
 
@@ -43,7 +45,7 @@ void handler_odblokowanie(int sig) {
     if (stan_hali != NULL && id_sektora >= 0) {
         stan_hali->sektor_zablokowany[id_sektora] = 0;
         struct sembuf sig_odblok = {SEM_SEKTOR(id_sektora), 100, 0};
-        semop(sem_id, &sig_odblok, 1);
+        semop_retry_ctx(sem_id, &sig_odblok, 1, "semop sig odblok");
         pthread_cond_broadcast(&cond_sektor);
         const char *msg = "[ODBLOKOWANIE] SEKTOR ODBLOKOWANY\n";
         write(STDOUT_FILENO, msg, strlen(msg));
@@ -130,7 +132,9 @@ void wyslij_zgloszenie_do_kierownika(int typ, const char *wiadomosc) {
         rejestr_log("PRACOWNIK", "Sektor %d: Wyslano zgloszenie - %s", id_sektora, wiadomosc);
     }
 
-    close(fd);
+    if (close(fd) == -1) {
+        perror("close FIFO");
+    }
 }
 
 void obsluguj_ewakuacje() {
@@ -138,34 +142,37 @@ void obsluguj_ewakuacje() {
         return;
     }
 
-    struct sembuf operacje[1];
-    operacje[0].sem_num = 0;
-    operacje[0].sem_op = -1;
-    operacje[0].sem_flg = 0;
+    while (!ewakuacja_zgloszono) {
+        struct sembuf operacje[1];
+        operacje[0].sem_num = 0;
+        operacje[0].sem_op = -1;
+        operacje[0].sem_flg = 0;
 
-    if (semop(sem_id, operacje, 1) == -1) return;
+        if (semop_retry_ctx(sem_id, operacje, 1, "semop lock ewakuacja") == -1) return;
 
-    int liczba_osob = stan_hali->osoby_w_sektorze[id_sektora];
+        int liczba_osob = stan_hali->osoby_w_sektorze[id_sektora];
 
-    operacje[0].sem_op = 1;
-    semop(sem_id, operacje, 1);
+        operacje[0].sem_op = 1;
+        if (semop_retry_ctx(sem_id, operacje, 1, "semop unlock ewakuacja") == -1) return;
 
-    if (liczba_osob == 0) {
-        char msg[128];
-        snprintf(msg, sizeof(msg),
-                 "Sektor %d calkowicie ewakuowany (0 osob)",
-                 id_sektora);
+        if (liczba_osob == 0) {
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "Sektor %d calkowicie ewakuowany (0 osob)",
+                     id_sektora);
 
-        printf("%sPracownik %d: [OK] %s%s\n",
-               KOLOR_ZIELONY, id_sektora, msg, KOLOR_RESET);
+            printf("%sPracownik %d: [OK] %s%s\n",
+                   KOLOR_ZIELONY, id_sektora, msg, KOLOR_RESET);
 
-        rejestr_log("PRACOWNIK", msg);
-        wyslij_zgloszenie_do_kierownika(1, msg);
+            rejestr_log("PRACOWNIK", msg);
+            wyslij_zgloszenie_do_kierownika(1, msg);
 
-        ewakuacja_zgloszono = 1;
-    } else {
-        printf("Pracownik %d: Ewakuacja w toku, pozostalo %d osob w sektorze\n",
-               id_sektora, liczba_osob);
+            ewakuacja_zgloszono = 1;
+            break;
+        }
+
+        struct sembuf wait_wyjscie = {SEM_KIBIC_WYSZEDL, -1, 0};
+        if (semop_retry_ctx(sem_id, &wait_wyjscie, 1, "semop wait wyszedl") == -1) return;
     }
 }
 
@@ -204,7 +211,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
             if (stan_hali->faza_meczu == FAZA_PO_MECZU) {
                 b->miejsca[i].zgoda_na_wejscie = 5;
                 struct sembuf sig = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
-                semop(sem_id, &sig, 1);
+                semop_retry_ctx(sem_id, &sig, 1, "semop sig slot");
                 continue;
             }
 
@@ -217,7 +224,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
                 b->miejsca[i].zgoda_na_wejscie = 2;
                 struct sembuf sig_noz = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
-                semop(sem_id, &sig_noz, 1);
+                semop_retry_ctx(sem_id, &sig_noz, 1, "semop sig noz");
                 continue;
             }
 
@@ -231,7 +238,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
                                id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica, b->miejsca[i].wiek);
                     b->miejsca[i].zgoda_na_wejscie = 3;
                     struct sembuf sig_wiek = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
-                    semop(sem_id, &sig_wiek, 1);
+                    semop_retry_ctx(sem_id, &sig_wiek, 1, "semop sig wiek");
                     continue;
                 }
             }
@@ -256,7 +263,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
                            (b->obecna_druzyna == DRUZYNA_A) ? 'A' : 'B');
                 struct sembuf sig_ok = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
-                semop(sem_id, &sig_ok, 1);
+                semop_retry_ctx(sem_id, &sig_ok, 1, "semop sig ok");
             } else {
                 printf("%sPracownik %d (Stanowisko %d): PID %d ma zla druzyne (%c zamiast %c) - wracaj do kolejki!%s\n",
                        KOLOR_ZOLTY,
@@ -268,7 +275,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
                            id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica);
                 b->miejsca[i].zgoda_na_wejscie = 4;
                 struct sembuf sig_zla = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
-                semop(sem_id, &sig_zla, 1);
+                semop_retry_ctx(sem_id, &sig_zla, 1, "semop sig zla");
             }
         }
     }
@@ -297,10 +304,7 @@ void* watek_stanowiska(void *arg) {
         }
 
         struct sembuf wait_praca = {SEM_PRACA(id_sektora), -1, 0};
-        if (semop(sem_id, &wait_praca, 1) == -1) {
-            if (errno == EINTR) continue;
-            break;
-        }
+        if (semop_retry_ctx(sem_id, &wait_praca, 1, "semop wait praca") == -1) break;
 
         if (!praca_trwa || stan_hali->ewakuacja_trwa) break;
 
@@ -309,15 +313,12 @@ void* watek_stanowiska(void *arg) {
         operacje[0].sem_op = -1;
         operacje[0].sem_flg = 0;
 
-        if (semop(sem_id, operacje, 1) == -1) {
-            if (errno == EINTR) continue;
-            break;
-        }
+        if (semop_retry_ctx(sem_id, operacje, 1, "semop lock obsluga") == -1) break;
 
         obsluz_stanowisko(nr_stanowiska);
         
         operacje[0].sem_op = 1;
-        semop(sem_id, operacje, 1);
+        semop_retry_ctx(sem_id, operacje, 1, "semop unlock obsluga");
     }
     
     printf("Pracownik %d: Watek stanowiska %d zakonczony\n", id_sektora, nr_stanowiska);

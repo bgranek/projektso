@@ -8,6 +8,11 @@ void handler_term(int sig) {
     kasjer_dziala = 0;
 }
 
+void handler_ewakuacja(int sig) {
+    (void)sig;
+    kasjer_dziala = 0;
+}
+
 int id_kasjera = -1;
 int shm_id = -1;
 int msg_id = -1;
@@ -18,7 +23,9 @@ void obsluga_wyjscia() {
     if (stan_hali != NULL && id_kasjera >= 0) {
         stan_hali->pidy_kasjerow[id_kasjera] = 0;
         stan_hali->kasa_aktywna[id_kasjera] = 0;
-        shmdt(stan_hali);
+        if (shmdt(stan_hali) == -1) {
+            perror("shmdt kasjer");
+        }
     }
 }
 
@@ -67,49 +74,94 @@ void aktualizuj_status() {
     struct sembuf lock = {0, -1, 0};
     struct sembuf unlock = {0, 1, 0};
 
-    if (semop(sem_id, &lock, 1) == -1) return;
+    if (semop(sem_id, &lock, 1) == -1) {
+        if (errno != EINTR) perror("semop lock kasa");
+        return;
+    }
 
     if (stan_hali->wszystkie_bilety_sprzedane) {
         stan_hali->kasa_aktywna[id_kasjera] = 0;
-        semop(sem_id, &unlock, 1);
+        stan_hali->kasa_zamykanie[id_kasjera] = 0;
+        if (semop(sem_id, &unlock, 1) == -1) {
+            perror("semop unlock kasa");
+        }
         return;
     }
 
-    if (id_kasjera < 2) {
-        stan_hali->kasa_aktywna[id_kasjera] = 1;
-        semop(sem_id, &unlock, 1);
-        return;
+    if (stan_hali->kasa_zamykanie[id_kasjera] &&
+        stan_hali->kolejka_dlugosc[id_kasjera] == 0) {
+        stan_hali->kasa_aktywna[id_kasjera] = 0;
+        stan_hali->kasa_zamykanie[id_kasjera] = 0;
     }
-
-    int N = 0;
-    int K = 0;
-
-    for(int i = 0; i < LICZBA_KAS; i++) {
-        if(stan_hali->kasa_aktywna[i]) N++;
-        K += stan_hali->kolejka_dlugosc[i];
-    }
-
-    int limit = stan_hali->pojemnosc_calkowita / 10;
-    int potrzebne = K / limit;
-
-    if (potrzebne < 2) potrzebne = 2;
-    if (potrzebne > LICZBA_KAS) potrzebne = LICZBA_KAS;
 
     int poprzedni_status = stan_hali->kasa_aktywna[id_kasjera];
+    if (id_kasjera == 0) {
+        int K = 0;
+        for (int i = 0; i < LICZBA_KAS; i++) {
+            K += stan_hali->kolejka_dlugosc[i];
+        }
 
-    if (K < limit * (N - 1) && id_kasjera >= potrzebne) {
-        stan_hali->kasa_aktywna[id_kasjera] = 0;
-    } else if (id_kasjera < potrzebne) {
-        stan_hali->kasa_aktywna[id_kasjera] = 1;
+        int limit = stan_hali->pojemnosc_calkowita / 10;
+        if (limit <= 0) limit = 1;
+
+        int potrzebne = (K + limit - 1) / limit;
+        if (potrzebne < 2) potrzebne = 2;
+        if (potrzebne > LICZBA_KAS) potrzebne = LICZBA_KAS;
+
+        int N = stan_hali->aktywne_kasy;
+        if (N < 2) N = 2;
+        if (N > LICZBA_KAS) N = LICZBA_KAS;
+
+        if (potrzebne > N) {
+            int reopened = 0;
+            for (int i = 0; i < LICZBA_KAS; i++) {
+                if (stan_hali->kasa_zamykanie[i]) {
+                    stan_hali->kasa_zamykanie[i] = 0;
+                    N++;
+                    reopened = 1;
+                    break;
+                }
+            }
+            if (!reopened) {
+                for (int i = 0; i < LICZBA_KAS; i++) {
+                    if (!stan_hali->kasa_aktywna[i]) {
+                        stan_hali->kasa_aktywna[i] = 1;
+                        N++;
+                        struct sembuf wake = {SEM_KASA(i), 1, 0};
+                        if (semop(sem_id, &wake, 1) == -1) {
+                            perror("semop wake kasa");
+                        }
+                        break;
+                    }
+                }
+            }
+        } else if (potrzebne < N && N > 2) {
+            int zamknieta = -1;
+            for (int i = LICZBA_KAS - 1; i >= 0; i--) {
+                if (stan_hali->kasa_aktywna[i] && !stan_hali->kasa_zamykanie[i]) {
+                    zamknieta = i;
+                    break;
+                }
+            }
+            if (zamknieta >= 0) {
+                stan_hali->kasa_zamykanie[zamknieta] = 1;
+                N--;
+            }
+        }
+
+        stan_hali->aktywne_kasy = N;
     }
 
-    if (poprzedni_status != stan_hali->kasa_aktywna[id_kasjera]) {
+    int nowy_status = stan_hali->kasa_aktywna[id_kasjera];
+    if (semop(sem_id, &unlock, 1) == -1) {
+        perror("semop unlock kasa");
+    }
+
+    if (poprzedni_status != nowy_status) {
         rejestr_log("KASJER", "Kasa %d: Status zmieniony na %s",
                    id_kasjera,
-                   stan_hali->kasa_aktywna[id_kasjera] ? "AKTYWNA" : "NIEAKTYWNA");
+                   nowy_status ? "AKTYWNA" : "NIEAKTYWNA");
     }
-
-    semop(sem_id, &unlock, 1);
 }
 
 void obsluz_klienta() {
@@ -118,11 +170,16 @@ void obsluz_klienta() {
     }
 
     KomunikatBilet zapytanie;
+    long typ = id_kasjera + 1;
     if (msgrcv(msg_id, &zapytanie, sizeof(KomunikatBilet) - sizeof(long),
-               TYP_KOMUNIKATU_ZAPYTANIE, 0) == -1) {
+               typ, 0) == -1) {
         if (errno == EINTR) return;
         if (errno == EIDRM || errno == EINVAL) exit(0);
         perror("msgrcv");
+        return;
+    }
+
+    if (zapytanie.pid_kibica == 0 && zapytanie.liczba_biletow == 0) {
         return;
     }
 
@@ -130,7 +187,10 @@ void obsluz_klienta() {
     operacje[0].sem_num = 0;
     operacje[0].sem_op = -1;
     operacje[0].sem_flg = 0;
-    semop(sem_id, operacje, 1);
+    if (semop(sem_id, operacje, 1) == -1) {
+        if (errno != EINTR) perror("semop lock sprzedaz");
+        return;
+    }
 
     int znaleziono_sektor = -1;
     int sprzedane_bilety = 0;
@@ -174,15 +234,27 @@ void obsluz_klienta() {
         }
     }
 
-    if (sprawdz_czy_wyprzedane()) {
+    if (sprawdz_czy_wyprzedane() && !stan_hali->wszystkie_bilety_sprzedane) {
         stan_hali->wszystkie_bilety_sprzedane = 1;
+        stan_hali->aktywne_kasy = 0;
+        for (int i = 0; i < LICZBA_KAS; i++) {
+            stan_hali->kasa_aktywna[i] = 0;
+        }
         rejestr_log("KASJER", "Wszystkie bilety sprzedane - zamykanie kas");
         printf("%sKasjer %d: WSZYSTKIE BILETY SPRZEDANE - zamykam kasy%s\n",
                KOLOR_ZOLTY, id_kasjera, KOLOR_RESET);
+        for (int i = 0; i < LICZBA_KAS; i++) {
+            struct sembuf wake = {SEM_KASA(i), 1, 0};
+            if (semop(sem_id, &wake, 1) == -1) {
+                perror("semop wake kasa wyprzedane");
+            }
+        }
     }
 
     operacje[0].sem_op = 1;
-    semop(sem_id, operacje, 1);
+    if (semop(sem_id, operacje, 1) == -1) {
+        perror("semop unlock sprzedaz");
+    }
 
     OdpowiedzBilet odpowiedz;
     memset(&odpowiedz, 0, sizeof(odpowiedz));
@@ -243,6 +315,12 @@ int main(int argc, char *argv[]) {
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
 
+    struct sigaction sa_ewak;
+    sa_ewak.sa_handler = handler_ewakuacja;
+    sigemptyset(&sa_ewak.sa_mask);
+    sa_ewak.sa_flags = 0;
+    sigaction(SYGNAL_EWAKUACJA, &sa_ewak, NULL);
+
     stan_hali->pidy_kasjerow[id_kasjera] = getpid();
     aktualizuj_status();
 
@@ -274,6 +352,7 @@ int main(int argc, char *argv[]) {
             struct sembuf wait_kasa = {SEM_KASA(id_kasjera), -1, 0};
             if (semop(sem_id, &wait_kasa, 1) == -1) {
                 if (errno == EINTR) continue;
+                perror("semop wait kasa");
                 break;
             }
             continue;

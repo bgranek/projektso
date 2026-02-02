@@ -59,7 +59,8 @@
 #define SEM_KASA_BASE 133
 #define SEM_KIBIC_WYSZEDL 143
 #define SEM_EWAKUACJA_KONIEC 144
-#define SEM_TOTAL 145
+#define SEM_START_MECZU 145
+#define SEM_TOTAL 146
 
 #define SEM_SLOT(s,st,m) (SEM_SLOT_BASE + (s)*6 + (st)*3 + (m))
 #define SEM_SEKTOR(s) (SEM_SEKTOR_BASE + (s))
@@ -123,6 +124,7 @@ typedef struct {
     MiejscaKolejki miejsca[3];
     int obecna_druzyna;
     int liczba_oczekujacych;
+    pid_t pid_agresora;
     pthread_mutex_t mutex;
 } Bramka;
 
@@ -155,16 +157,19 @@ typedef struct {
     int sektor_ewakuowany[LICZBA_SEKTOROW];
 
     int kasa_aktywna[LICZBA_KAS];
+    int kasa_zamykanie[LICZBA_KAS];
     int kolejka_dlugosc[LICZBA_KAS];
     int wszystkie_bilety_sprzedane;
 
     pid_t pidy_kasjerow[LICZBA_KAS];
     pid_t pidy_pracownikow[LICZBA_SEKTOROW];
     pid_t pid_kierownika;
+    pid_t pid_main;
 
     int suma_kibicow_w_hali;
     int liczba_vip;
     int ewakuacja_trwa;
+    int aktywne_kasy;
 
     FazaMeczu faza_meczu;
     time_t czas_startu_symulacji;
@@ -183,6 +188,7 @@ typedef struct {
     int czy_vip;
     int liczba_biletow;
     int nr_sektora;
+    int nr_kasy;
 } KomunikatBilet;
 
 typedef struct {
@@ -261,6 +267,15 @@ static inline int bezpieczny_scanf_int(const char *prompt, int min, int max) {
     }
 
     return wartosc;
+}
+
+static inline int semop_retry_ctx(int semid, struct sembuf *ops, size_t nops, const char *ctx) {
+    while (semop(semid, ops, nops) == -1) {
+        if (errno == EINTR) continue;
+        perror(ctx);
+        return -1;
+    }
+    return 0;
 }
 
 #endif

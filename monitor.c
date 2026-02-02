@@ -46,14 +46,18 @@ int main(int argc, char *argv[]) {
 
         if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
             fprintf(stderr, "Nieprawidlowy adres: %s\n", host);
-            close(sock);
+            if (close(sock) == -1) {
+                perror("close");
+            }
             return 1;
         }
 
         if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
             printf("\r\033[K[OFFLINE] Brak polaczenia z hala...");
             fflush(stdout);
-            close(sock);
+            if (close(sock) == -1) {
+                perror("close");
+            }
             sleep(interwal);
             continue;
         }
@@ -61,7 +65,9 @@ int main(int argc, char *argv[]) {
         char bufor[BUFOR_SIZE];
         memset(bufor, 0, sizeof(bufor));
         int n = recv(sock, bufor, sizeof(bufor) - 1, 0);
-        close(sock);
+        if (close(sock) == -1) {
+            perror("close");
+        }
 
         if (n <= 0) {
             sleep(interwal);
