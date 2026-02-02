@@ -748,7 +748,58 @@ msgrcv(msg_id, &odp, sizeof(odp) - sizeof(long), getpid(), 0);
 
 ## 19. Testy
 
-*Sekcja do uzupełnienia*
+Poniżej cztery testy udokumentowane na podstawie logów z pliku `symulacja.log` (ostatnia symulacja).
+
+### Test 1 - Działanie agresji (wpychanie po 5 przepuszczeniach)
+
+- **Cel:** potwierdzić, że kibic po przepuszczeniu 5 osób przechodzi w tryb agresji.
+- **Oczekiwany rezultat:** w logu pojawia się wpis o frustracji po 5 przepuszczeniach.
+- **Wynik:** **OK** - wpisy w logu potwierdzają przejście w tryb agresji.
+
+Dowód w logu:
+```
+[15:03:53] [KIBIC     ] [PID:4518  ] PID 4518 frustracja po 5 przepuszczeniach
+```
+
+### Test 2 - Działanie kontroli na bramkach
+
+- **Cel:** potwierdzić wykrywanie niebezpiecznych przedmiotów oraz przepuszczanie poprawnych kibiców.
+- **Oczekiwany rezultat:** kibic z nożem jest zatrzymany, a prawidłowy kibic wpuszczony.
+- **Wynik:** **OK** - log pokazuje zatrzymanie za nóż i wpuszczenie kibica z poprawnymi danymi.
+
+Dowód w logu:
+```
+[15:03:50] [KONTROLA  ] [PID:4277  ] Sektor 2 Stan 0: Zatrzymano PID 4309 - noz
+[15:03:50] [KIBIC     ] [PID:4309  ] PID 4309 wyrzucony - noz
+[15:03:50] [KONTROLA  ] [PID:4276  ] Sektor 1 Stan 1: Wpuszczono PID 4310 druzyna B
+```
+
+### Test 3 - Sprzedaż biletów i przekazanie biletu koledze
+
+- **Cel:** sprawdzić sprzedaż 2 biletów i przekazanie jednego koledze.
+- **Oczekiwany rezultat:** w logu widoczna sprzedaż 2 biletów oraz wpis o przekazaniu biletu.
+- **Wynik:** **OK** - log potwierdza sprzedaż 2 biletów i przekazanie biletu koledze.
+
+Dowód w logu:
+```
+[15:03:50] [SPRZEDAZ  ] [PID:4265  ] Kasa 0: 2 bilet(y) sektor 4 dla PID 4264 
+[15:03:50] [KIBIC     ] [PID:4264  ] PID 4264 kupil 2 bilet(y) do sektora 4 (zwykly)
+[15:03:50] [KIBIC     ] [PID:4264  ] PID 4264 przekazal bilet koledze 4284
+```
+
+### Test 4 - Rodzina (rodzic + dziecko) i wejście z opiekunem
+
+- **Cel:** sprawdzić tworzenie rodziny oraz wejście dziecka z opiekunem.
+- **Oczekiwany rezultat:** log zawiera wpisy o utworzeniu dziecka, kompletnej rodzinie i pozytywnej kontroli.
+- **Wynik:** **OK** - log potwierdza poprawne przejście rodzica i dziecka.
+
+Dowód w logu:
+```
+[15:03:50] [KIBIC     ] [PID:4316  ] PID 4316 rodzic utworzyl dziecko 4317
+[15:03:50] [KIBIC     ] [PID:4317  ] PID 4317 dziecko rodzica 4316, wiek 11, sektor 7
+[15:03:50] [KIBIC     ] [PID:4317  ] PID 4317 rodzina kompletna przy bramce
+[15:03:50] [KONTROLA  ] [PID:4283  ] Sektor 7 Stan 1: Dziecko PID 4317 z opiekunem
+```
 
 ---
 
