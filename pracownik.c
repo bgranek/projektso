@@ -1,32 +1,44 @@
+/*
+ * PRACOWNIK.C - Proces pracownika sektora
+ *
+ * Odpowiedzialnosci:
+ * - Kontrola kibicow przy stanowiskach
+ * - Reakcja na blokady i ewakuacje
+ * - Wysylanie zgloszen do kierownika
+ */
 #include "common.h"
 
-int id_sektora = -1;
-int shm_id = -1;
-int sem_id = -1;
-StanHali *stan_hali = NULL;
-volatile sig_atomic_t ewakuacja_zgloszono = 0;
-int praca_trwa = 1;
+int id_sektora = -1;     // Numer sektora (0-7)
+int shm_id = -1;         // ID pamieci dzielonej
+int sem_id = -1;         // ID semaforow
+StanHali *stan_hali = NULL; // Wskaznik na stan hali
+volatile sig_atomic_t ewakuacja_zgloszono = 0; // Czy sektor zgloszyl ewakuacje
+int praca_trwa = 1;      // Flaga pracy watkow stanowisk
 
-pthread_t watki_stanowisk[2];
-pthread_t watek_sygnalow_id;
-pthread_mutex_t mutex_sektor = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cond_sektor = PTHREAD_COND_INITIALIZER;
+pthread_t watki_stanowisk[2]; // Dwa stanowiska na sektor
+pthread_t watek_sygnalow_id;  // Watek nasluchu sygnalow
+pthread_mutex_t mutex_sektor = PTHREAD_MUTEX_INITIALIZER; // Ochrona flag sektorowych
+pthread_cond_t cond_sektor = PTHREAD_COND_INITIALIZER;    // Budzenie stanowisk
 
 typedef struct {
     int id_stanowiska;
     int id_sektora;
 } DaneWatku;
 
+/* Sprzatanie procesu pracownika */
 void obsluga_wyjscia() {
+    // Zatrzymaj watki stanowisk
     pthread_mutex_lock(&mutex_sektor);
     praca_trwa = 0;
     pthread_cond_broadcast(&cond_sektor);
     pthread_mutex_unlock(&mutex_sektor);
 
+    // Sprzatanie prymitywow synchronizacji
     pthread_mutex_destroy(&mutex_sektor);
     pthread_cond_destroy(&cond_sektor);
 
     if (stan_hali != NULL && id_sektora >= 0) {
+        // Wyczysc PID pracownika
         stan_hali->pidy_pracownikow[id_sektora] = 0;
         if (shmdt(stan_hali) == -1) {
             perror("shmdt pracownik");
@@ -34,15 +46,19 @@ void obsluga_wyjscia() {
     }
 }
 
+/* Zatrzymanie pracy stanowisk (bezpiecznie z sygnalow) */
 static void ustaw_praca_stop() {
+    // Zatrzymanie pracy watkow (wybudzanie z cond)
     pthread_mutex_lock(&mutex_sektor);
     praca_trwa = 0;
     pthread_cond_broadcast(&cond_sektor);
     pthread_mutex_unlock(&mutex_sektor);
 }
 
+/* Ustawienie blokady sektora i pobudzenie stanowisk */
 static void ustaw_blokade(int blokada) {
     if (stan_hali != NULL && id_sektora >= 0) {
+        // Aktualizacja flagi blokady sektora
         pthread_mutex_lock(&mutex_sektor);
         stan_hali->sektor_zablokowany[id_sektora] = blokada;
         pthread_cond_broadcast(&cond_sektor);
@@ -50,6 +66,7 @@ static void ustaw_blokade(int blokada) {
     }
 }
 
+/* Podlaczenie do zasobow IPC i rejestru */
 void inicjalizuj() {
     key_t klucz_shm = ftok(".", KLUCZ_SHM);
     SPRAWDZ(klucz_shm);
@@ -73,8 +90,10 @@ void inicjalizuj() {
     }
 }
 
+/* Watek obslugi sygnalow (blokada/ewakuacja/SIGTERM) */
 static void* watek_sygnalow(void *arg) {
     (void)arg;
+    // Oczekiwane sygnaly w watku sygnalow
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, SYGNAL_BLOKADA_SEKTORA);
@@ -91,16 +110,19 @@ static void* watek_sygnalow(void *arg) {
         }
 
         if (sig == SYGNAL_BLOKADA_SEKTORA) {
+            // Zablokuj sektor
             ustaw_blokade(1);
             const char *msg = "[BLOKADA] SEKTOR ZABLOKOWANY\n";
             write(STDOUT_FILENO, msg, strlen(msg));
         } else if (sig == SYGNAL_ODBLOKOWANIE_SEKTORA) {
+            // Odblokuj sektor i wybudz oczekujacych
             ustaw_blokade(0);
             struct sembuf sig_odblok = {SEM_SEKTOR(id_sektora), 100, 0};
             semop_retry_ctx(sem_id, &sig_odblok, 1, "semop sig odblok");
             const char *msg = "[ODBLOKOWANIE] SEKTOR ODBLOKOWANY\n";
             write(STDOUT_FILENO, msg, strlen(msg));
         } else if (sig == SYGNAL_EWAKUACJA) {
+            // Ewakuacja - zakoncz prace stanowisk
             const char *msg = "[EWAKUACJA] Otwieram bramki awaryjne.\n";
             write(STDOUT_FILENO, msg, strlen(msg));
             ustaw_praca_stop();
@@ -108,6 +130,7 @@ static void* watek_sygnalow(void *arg) {
             semop_retry_ctx(sem_id, &wake, 1, "semop wake praca");
             break;
         } else if (sig == SIGTERM) {
+            // SIGTERM - zakoncz prace watkow
             ustaw_praca_stop();
             struct sembuf wake = {SEM_PRACA(id_sektora), 2, 0};
             semop_retry_ctx(sem_id, &wake, 1, "semop wake praca");
@@ -117,7 +140,9 @@ static void* watek_sygnalow(void *arg) {
     return NULL;
 }
 
+/* Uruchomienie watku sygnalow i maskowanie sygnalow w watkach roboczych */
 static void uruchom_watek_sygnalow() {
+    // Maskuj sygnaly w watkach roboczych - odbiera tylko watek sygnalow
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, SYGNAL_BLOKADA_SEKTORA);
@@ -138,6 +163,7 @@ static void uruchom_watek_sygnalow() {
     }
 }
 
+/* Zgloszenie do kierownika przez FIFO */
 void wyslij_zgloszenie_do_kierownika(int typ, const char *wiadomosc) {
     int fd = open(FIFO_PRACOWNIK_KIEROWNIK, O_WRONLY | O_NONBLOCK);
     if (fd == -1) {
@@ -168,11 +194,13 @@ void wyslij_zgloszenie_do_kierownika(int typ, const char *wiadomosc) {
     }
 }
 
+/* Monitorowanie ewakuacji sektora i wyslanie zgloszenia */
 void obsluguj_ewakuacje() {
     if (!stan_hali->ewakuacja_trwa || ewakuacja_zgloszono) {
         return;
     }
 
+    // Czekaj az sektor bedzie pusty i zglos to kierownikowi
     while (!ewakuacja_zgloszono) {
         struct sembuf operacje[1];
         operacje[0].sem_num = 0;
@@ -207,9 +235,11 @@ void obsluguj_ewakuacje() {
     }
 }
 
+/* Sprawdzenie, czy dziecko ma opiekuna w rejestrze rodzin */
 int sprawdz_rodzine_dziecka(pid_t pid_dziecka) {
     RejestrRodzin *rej = &stan_hali->rejestr_rodzin;
 
+    // Sprawdz czy dziecko ma opiekuna w tym sektorze
     for (int i = 0; i < MAX_RODZIN; i++) {
         if (rej->rodziny[i].aktywna &&
             rej->rodziny[i].pid_dziecka == pid_dziecka &&
@@ -223,9 +253,11 @@ int sprawdz_rodzine_dziecka(pid_t pid_dziecka) {
     return 0;
 }
 
+/* Kontrola kibicow na konkretnym stanowisku */
 void obsluz_stanowisko(int nr_stanowiska) {
     Bramka *b = &stan_hali->bramki[id_sektora][nr_stanowiska];
 
+    // Liczba zajetych miejsc w stanowisku
     int liczba_zajetych = 0;
     for (int i = 0; i < 3; i++) {
         if (b->miejsca[i].pid_kibica != 0) {
@@ -234,12 +266,14 @@ void obsluz_stanowisko(int nr_stanowiska) {
     }
 
     if (liczba_zajetych == 0) {
+        // Gdy pusto - resetuj druzyna
         b->obecna_druzyna = 0;
     }
 
     for (int i = 0; i < 3; i++) {
         if (b->miejsca[i].pid_kibica != 0 && b->miejsca[i].zgoda_na_wejscie == 0) {
             if (stan_hali->faza_meczu == FAZA_PO_MECZU) {
+                // Po meczu - nie wpuszczamy, zwracamy do kolejki
                 b->miejsca[i].zgoda_na_wejscie = 5;
                 struct sembuf sig = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
                 semop_retry_ctx(sem_id, &sig, 1, "semop sig slot");
@@ -247,6 +281,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
             }
 
             if (b->miejsca[i].ma_przedmiot) {
+                // Odrzucenie: noz
                 printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Posiada noz!%s\n",
                        KOLOR_CZERWONY,
                        id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
@@ -260,6 +295,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
             }
 
             if (b->miejsca[i].wiek < 15) {
+                // Dziecko bez opiekuna
                 if (!sprawdz_rodzine_dziecka(b->miejsca[i].pid_kibica)) {
                     printf("%sPracownik %d (Stanowisko %d): ZATRZYMANO PID %d - Wiek %d < 15 bez opiekuna%s\n",
                            KOLOR_ZOLTY,
@@ -275,6 +311,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
             }
 
             if (b->obecna_druzyna == 0 || b->obecna_druzyna == b->miejsca[i].druzyna) {
+                // Druzyna zgodna - wpusc
                 b->obecna_druzyna = b->miejsca[i].druzyna;
                 b->miejsca[i].zgoda_na_wejscie = 1;
 
@@ -296,6 +333,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
                 struct sembuf sig_ok = {SEM_SLOT(id_sektora, nr_stanowiska, i), 1, 0};
                 semop_retry_ctx(sem_id, &sig_ok, 1, "semop sig ok");
             } else {
+                // Zla druzyna - przepusc z powrotem
                 printf("%sPracownik %d (Stanowisko %d): PID %d ma zla druzyne (%c zamiast %c) - wracaj do kolejki!%s\n",
                        KOLOR_ZOLTY,
                        id_sektora, nr_stanowiska, b->miejsca[i].pid_kibica,
@@ -312,6 +350,7 @@ void obsluz_stanowisko(int nr_stanowiska) {
     }
 }
 
+/* Watek stanowiska kontroli w sektorze */
 void* watek_stanowiska(void *arg) {
     DaneWatku *dane = (DaneWatku*)arg;
     int nr_stanowiska = dane->id_stanowiska;
@@ -322,6 +361,7 @@ void* watek_stanowiska(void *arg) {
     while (1) {
         pthread_mutex_lock(&mutex_sektor);
         
+        // Czekaj, gdy sektor zablokowany
         while (stan_hali->sektor_zablokowany[id_sektora] && praca_trwa && !stan_hali->ewakuacja_trwa) {
             pthread_cond_wait(&cond_sektor, &mutex_sektor);
         }
@@ -332,7 +372,7 @@ void* watek_stanowiska(void *arg) {
         
         if (!lokalna_praca || lokalna_ewak) break;
 
-        struct sembuf wait_praca = {SEM_PRACA(id_sektora), -1, 0};
+        struct sembuf wait_praca = {SEM_PRACA(id_sektora), -1, 0}; // Czekanie na kibica
         if (semop_retry_ctx(sem_id, &wait_praca, 1, "semop wait praca") == -1) break;
 
         pthread_mutex_lock(&mutex_sektor);
@@ -346,6 +386,7 @@ void* watek_stanowiska(void *arg) {
         operacje[0].sem_op = -1;
         operacje[0].sem_flg = 0;
 
+        // Sekcja krytyczna dla obslugi stanowiska
         if (semop_retry_ctx(sem_id, operacje, 1, "semop lock obsluga") == -1) break;
 
         obsluz_stanowisko(nr_stanowiska);
@@ -361,6 +402,7 @@ void* watek_stanowiska(void *arg) {
     return NULL;
 }
 
+/* Uruchomienie dwoch watkow stanowisk */
 void uruchom_watki_stanowisk() {
     for (int i = 0; i < 2; i++) {
         DaneWatku *dane = malloc(sizeof(DaneWatku));
@@ -387,7 +429,7 @@ int main(int argc, char *argv[]) {
 
     id_sektora = parsuj_int(argv[1], "numer sektora", 0, LICZBA_SEKTOROW - 1);
 
-    setlinebuf(stdout);
+    setlinebuf(stdout); // Ustawienie buforowania liniowego
 
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -398,16 +440,16 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    inicjalizuj();
+    inicjalizuj(); // Podlaczenie do IPC
     uruchom_watek_sygnalow();
 
-    stan_hali->pidy_pracownikow[id_sektora] = getpid();
+    stan_hali->pidy_pracownikow[id_sektora] = getpid(); // Rejestr PID pracownika
 
     printf("Pracownik sektora %d gotowy (PID: %d). Uruchamiam 2 watki stanowisk.\n",
            id_sektora, getpid());
     rejestr_log("PRACOWNIK", "Sektor %d: Start PID %d", id_sektora, getpid());
 
-    uruchom_watki_stanowisk();
+    uruchom_watki_stanowisk(); // Start dwoch stanowisk kontroli
 
     for (int i = 0; i < 2; i++) {
         pthread_join(watki_stanowisk[i], NULL);

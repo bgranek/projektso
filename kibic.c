@@ -1,3 +1,11 @@
+/*
+ * KIBIC.C - Proces kibica
+ *
+ * Odpowiedzialnosci:
+ * - Zakup biletu i wybor kasy
+ * - Wejscie przez bramke (VIP, rodziny, agresor)
+ * - Zachowanie w trakcie meczu i wyjscie/ewakuacja
+ */
 #include "common.h"
 #include <time.h>
 #include <sys/wait.h>
@@ -7,44 +15,52 @@ int msg_id = -1;
 int sem_id = -1;
 StanHali *stan_hali = NULL;
 
-int moja_druzyna = 0;
-int jestem_vip = 0;
-int ma_bilet = 0;
-int numer_sektora = -1;
-int mam_noz = 0;
-int moj_wiek = 20;
-int liczba_biletow = 1;
+// --- Stan kibica (wspolny dla calego procesu) ---
+int moja_druzyna = 0;       // Wylosowana druzyna kibica
+int jestem_vip = 0;         // Flaga VIP (osobne wejscie)
+int ma_bilet = 0;           // Czy kibic kupil bilet
+int numer_sektora = -1;     // Przydzielony sektor
+int mam_noz = 0;            // Czy niesie zabroniony przedmiot
+int moj_wiek = 20;          // Wiek kibica
+int liczba_biletow = 1;     // Zadana liczba biletow
 
-int jestem_dzieckiem = 0;
-int jestem_rodzicem = 0;
-int jestem_kolega = 0;
-pid_t pid_partnera = 0;
-int id_rodziny = -1;
+// --- Role specjalne ---
+int jestem_dzieckiem = 0;   // Wejscie w trybie dziecka
+int jestem_rodzicem = 0;    // Wejscie w trybie rodzica
+int jestem_kolega = 0;      // Wejscie z biletu "kolega"
+pid_t pid_partnera = 0;     // PID partnera (dziecko/rodzic/kolega)
+int id_rodziny = -1;        // Indeks w rejestrze rodzin
 
-volatile sig_atomic_t ewakuacja_mnie = 0;
-int jestem_w_hali = 0;
-int moja_kasa = -1;
-int agresor_aktywny = 0;
-int agresor_sektor = -1;
-int agresor_stanowisko = -1;
+// --- Flagi runtime ---
+volatile sig_atomic_t ewakuacja_mnie = 0; // Flaga ewakuacji procesu
+int jestem_w_hali = 0;                   // Czy kibic jest w hali
+int moja_kasa = -1;                      // Numer wybranej kasy
+int agresor_aktywny = 0;                 // Czy kibic ma status agresora
+int agresor_sektor = -1;                 // Sektor agresora
+int agresor_stanowisko = -1;             // Stanowisko agresora
 
+/* Sygnal ewakuacji - ustaw tylko flage */
 void handler_ewakuacja(int sig) {
     (void)sig;
     ewakuacja_mnie = 1;
 }
 
+/* Szybkie wyjscie przy SIGTERM */
 void handler_term(int sig) {
     (void)sig;
     _exit(0);
 }
 
+/* Natychmiastowe opuszczenie hali podczas ewakuacji */
 void ewakuuj_sie() {
     if (!jestem_w_hali) return;
 
+    // Komunikat i log ewakuacji
     printf("%sKibic %d: [EWAKUACJA] Opuszczam hale natychmiast!%s\n",
            KOLOR_CZERWONY, getpid(), KOLOR_RESET);
     rejestr_log("KIBIC", "PID %d ewakuacja z sektora %d", getpid(), numer_sektora);
 
+    // Aktualizacja licznikow w hali
     struct sembuf op = {0, -1, 0};
     if (semop_retry_ctx(sem_id, &op, 1, "semop lock ewakuacja") == -1) return;
 
@@ -62,6 +78,7 @@ void ewakuuj_sie() {
     op.sem_op = 1;
     if (semop_retry_ctx(sem_id, &op, 1, "semop unlock ewakuacja") == -1) return;
 
+    // Sygnal do oczekujacych na wyjscie
     struct sembuf sig_wyszedl = {SEM_KIBIC_WYSZEDL, 1, 0};
     semop_retry_ctx(sem_id, &sig_wyszedl, 1, "semop sig wyszedl");
 
@@ -71,8 +88,10 @@ void ewakuuj_sie() {
     rejestr_log("KIBIC", "PID %d ewakuacja zakonczona", getpid());
 }
 
+/* Sprzatanie zasobow procesu kibica */
 void obsluga_wyjscia() {
     if (stan_hali != NULL) {
+        // Zwolnij agresora jesli byl ustawiony
         if (agresor_aktywny && agresor_sektor >= 0 && agresor_stanowisko >= 0) {
             struct sembuf op = {0, -1, 0};
             if (semop_retry_ctx(sem_id, &op, 1, "semop lock agresor") == 0) {
@@ -84,16 +103,20 @@ void obsluga_wyjscia() {
                 semop_retry_ctx(sem_id, &op, 1, "semop unlock agresor");
             }
         }
+        // Dezaktywuj rodzine po wyjsciu rodzica
         if (jestem_rodzicem && id_rodziny >= 0) {
             stan_hali->rejestr_rodzin.rodziny[id_rodziny].aktywna = 0;
         }
+        // Odlacz pamiec dzielona
         if (shmdt(stan_hali) == -1) {
             perror("shmdt kibic");
         }
     }
 }
 
+/* Rejestracja nowej rodziny (rodzic+dziecko) w pamieci dzielonej */
 int zarejestruj_rodzine(pid_t pid_rodzica, pid_t pid_dziecka) {
+    // Sekcja krytyczna: rejestr rodzin
     struct sembuf op = {0, -1, 0};
     if (semop_retry_ctx(sem_id, &op, 1, "semop lock rodzina") == -1) return -1;
 
@@ -101,6 +124,7 @@ int zarejestruj_rodzine(pid_t pid_rodzica, pid_t pid_dziecka) {
     RejestrRodzin *rej = &stan_hali->rejestr_rodzin;
 
     for (int i = 0; i < MAX_RODZIN; i++) {
+        // Szukaj wolnego slotu
         if (!rej->rodziny[i].aktywna) {
             idx = i;
             break;
@@ -108,6 +132,7 @@ int zarejestruj_rodzine(pid_t pid_rodzica, pid_t pid_dziecka) {
     }
 
     if (idx >= 0) {
+        // Wpisz dane rodziny
         rej->rodziny[idx].pid_rodzica = pid_rodzica;
         rej->rodziny[idx].pid_dziecka = pid_dziecka;
         rej->rodziny[idx].sektor = -1;
@@ -122,9 +147,11 @@ int zarejestruj_rodzine(pid_t pid_rodzica, pid_t pid_dziecka) {
     return idx;
 }
 
+/* Oznaczenie obecnosci rodzica/dziecka przy bramce */
 void ustaw_przy_bramce(int flaga) {
     if (id_rodziny < 0) return;
 
+    // Zaktualizuj obecnosci w rodzinie
     struct sembuf op = {0, -1, 0};
     if (semop_retry_ctx(sem_id, &op, 1, "semop lock bramka") == -1) return;
 
@@ -141,19 +168,23 @@ void ustaw_przy_bramce(int flaga) {
     if (semop_retry_ctx(sem_id, &op, 1, "semop unlock bramka") == -1) return;
 
     if (both_present && flaga) {
+        // Sygnal, ze oboje sa przy bramce
         struct sembuf sig_rodz = {SEM_RODZINA(id_rodziny), 2, 0};
         semop_retry_ctx(sem_id, &sig_rodz, 1, "semop sig rodzina");
     }
 }
 
+/* Czekanie na partnera przy bramce (rodzic/dziecko) */
 int czekaj_na_partnera() {
     if (id_rodziny < 0) return 1;
 
+    // Jesli partner juz obecny, nie czekaj
     Rodzina *r = &stan_hali->rejestr_rodzin.rodziny[id_rodziny];
     if (r->rodzic_przy_bramce && r->dziecko_przy_bramce) {
         return 1;
     }
 
+    // Czekaj z ograniczeniem liczby prob
     for (int i = 0; i < 100; i++) {
         if (stan_hali->ewakuacja_trwa) return 0;
         struct sembuf wait_rodz = {SEM_RODZINA(id_rodziny), -1, 0};
@@ -167,7 +198,9 @@ int czekaj_na_partnera() {
     return 0;
 }
 
+/* Podlaczenie do zasobow IPC i konfiguracja sygnalow */
 void inicjalizuj() {
+    // Klucze IPC
     key_t klucz_shm = ftok(".", KLUCZ_SHM);
     SPRAWDZ(klucz_shm);
     key_t klucz_msg = ftok(".", KLUCZ_MSG);
@@ -184,18 +217,21 @@ void inicjalizuj() {
     sem_id = semget(klucz_sem, SEM_TOTAL, 0600);
     if (sem_id == -1) exit(0);
 
+    // Mapowanie pamieci dzielonej
     stan_hali = (StanHali*)shmat(shm_id, NULL, 0);
     if (stan_hali == (void*)-1) {
         perror("shmat kibic");
         exit(EXIT_FAILURE);
     }
 
+    // Sygnal ewakuacji
     struct sigaction sa;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sa.sa_handler = handler_ewakuacja;
     sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
 
+    // Sygnal zakonczenia
     struct sigaction sa_term;
     sigemptyset(&sa_term.sa_mask);
     sa_term.sa_flags = 0;
@@ -298,14 +334,16 @@ int wybierz_kase_bez_kolejki() {
     return wybrana;
 }
 
+/* Czyszczenie slota po przejsciu kibica */
 void wyczysc_slot(int sektor, int stanowisko, int slot) {
+    // Czyszczenie miejsca w bramce po odrzuceniu/wyjsciu
     struct sembuf op = {0, -1, 0};
     if (semop_retry_ctx(sem_id, &op, 1, "semop lock slot") == -1) return;
 
     Bramka *b = &stan_hali->bramki[sektor][stanowisko];
     memset(&b->miejsca[slot], 0, sizeof(MiejscaKolejki));
 
-    int zajete = 0;
+    int zajete = 0; // Czy pozostaly inne osoby w stanowisku
     for (int i = 0; i < 3; i++) {
         if (b->miejsca[i].pid_kibica != 0) {
             zajete = 1;
@@ -313,9 +351,11 @@ void wyczysc_slot(int sektor, int stanowisko, int slot) {
         }
     }
     if (!zajete) {
+        // Brak kibicow - resetuj druzyna stanowiska
         b->obecna_druzyna = 0;
     }
     if (b->pid_agresora != 0) {
+        // Jesli agresor nie istnieje w slotach, usun go
         int agresor_w_slotach = 0;
         for (int i = 0; i < 3; i++) {
             if (b->miejsca[i].pid_kibica == b->pid_agresora) {
@@ -332,7 +372,9 @@ void wyczysc_slot(int sektor, int stanowisko, int slot) {
     semop_retry_ctx(sem_id, &op, 1, "semop unlock slot");
 }
 
+/* Proba zakupu biletu przez kolejke komunikatow */
 void sprobuj_kupic_bilet() {
+    // Jesli wyprzedane, nie wchodz do kolejki
     if (stan_hali->wszystkie_bilety_sprzedane) {
         printf("%sKibic %d: Kasy zamkniete - bilety wyprzedane.%s\n",
                KOLOR_CZERWONY, getpid(), KOLOR_RESET);
@@ -340,6 +382,7 @@ void sprobuj_kupic_bilet() {
         return;
     }
 
+    // VIP omija kolejke; pozostali zwiekszaja licznik kolejki
     if (!jestem_vip) {
         aktualizuj_kolejke(1);
     } else {
@@ -349,6 +392,7 @@ void sprobuj_kupic_bilet() {
     }
 
     if (jestem_vip) {
+        // VIP wybiera kase bez kolejki
         moja_kasa = wybierz_kase_bez_kolejki();
     }
 
@@ -359,6 +403,7 @@ void sprobuj_kupic_bilet() {
         return;
     }
 
+    // Zbuduj zapytanie do kasjera
     KomunikatBilet msg;
     memset(&msg, 0, sizeof(msg));
     msg.mtype = moja_kasa + 1;
@@ -369,12 +414,14 @@ void sprobuj_kupic_bilet() {
     msg.nr_sektora = -1;
     msg.nr_kasy = moja_kasa;
 
+    // Wyslij zapytanie o bilet
     if (msgsnd(msg_id, &msg, sizeof(KomunikatBilet) - sizeof(long), 0) == -1) {
         perror("msgsnd");
         if (!jestem_vip && moja_kasa >= 0) aktualizuj_kolejke(-1);
         return;
     }
 
+    // Oczekuj na odpowiedz kasjera (mtype = PID)
     OdpowiedzBilet odp;
     if (msgrcv(msg_id, &odp, sizeof(OdpowiedzBilet) - sizeof(long), getpid(), 0) == -1) {
         perror("msgrcv");
@@ -385,6 +432,7 @@ void sprobuj_kupic_bilet() {
     if (!jestem_vip && moja_kasa >= 0) aktualizuj_kolejke(-1);
 
     if (odp.czy_sukces) {
+        // Sukces - zapisz dane biletu
         ma_bilet = 1;
         numer_sektora = odp.przydzielony_sektor;
         liczba_biletow = odp.liczba_sprzedanych;
@@ -408,10 +456,12 @@ void sprobuj_kupic_bilet() {
     }
 }
 
+/* Wejscie na hale przez bramke kontroli */
 void idz_do_bramki() {
     if (!ma_bilet) return;
 
     if (jestem_dzieckiem || jestem_rodzicem) {
+        // Rodzina: poczekaj na partnera przy bramce
         ustaw_przy_bramce(1);
         printf("Kibic %d (%s): Czekam na %s przy bramce...\n",
                getpid(),
@@ -429,6 +479,7 @@ void idz_do_bramki() {
     }
 
     if (numer_sektora == SEKTOR_VIP) {
+        // VIP wchodzi osobnym wejsciem bez kontroli bramkowej
         if (stan_hali->ewakuacja_trwa) {
             printf("%sKibic %d (VIP): Ewakuacja trwa - nie wchodze.%s\n",
                    KOLOR_CZERWONY, getpid(), KOLOR_RESET);
@@ -439,6 +490,7 @@ void idz_do_bramki() {
                KOLOR_MAGENTA, getpid(), KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d VIP wchodzi bez kontroli", getpid());
 
+        // Sekcja krytyczna: limit VIP
         struct sembuf op = {0, -1, 0};
         if (semop_retry_ctx(sem_id, &op, 1, "semop lock vip wejscie") == -1) return;
         if (stan_hali->liczba_vip >= stan_hali->limit_vip) {
@@ -460,6 +512,7 @@ void idz_do_bramki() {
         rejestr_log("KIBIC", "PID %d wszedl na sektor VIP", getpid());
 
         if (stan_hali->faza_meczu == FAZA_PRZED_MECZEM) {
+            // Czekaj na start meczu
             printf("Kibic %d: Czekam na start meczu.\n", getpid());
             rejestr_log("KIBIC", "PID %d czeka na start meczu", getpid());
             struct sembuf wait_start = {SEM_START_MECZU, 0, 0};
@@ -470,6 +523,7 @@ void idz_do_bramki() {
         rejestr_log("KIBIC", "PID %d oglada mecz", getpid());
 
         while (stan_hali->faza_meczu != FAZA_PO_MECZU && !ewakuacja_mnie && !stan_hali->ewakuacja_trwa) {
+            // Czekaj na koniec meczu lub ewakuacje
             struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
             if (semop_retry_ctx(sem_id, &wait_faza, 1, "semop wait faza") == -1) return;
         }
@@ -497,6 +551,7 @@ void idz_do_bramki() {
     }
 
     if (stan_hali->sektor_zablokowany[numer_sektora]) {
+        // Wejscie do sektora zablokowane przez kierownika
         printf("%sKibic %d: Sektor %d zablokowany. Czekam...%s\n",
                KOLOR_ZOLTY, getpid(), numer_sektora, KOLOR_RESET);
         rejestr_log("KIBIC", "PID %d czeka - sektor %d zablokowany", getpid(), numer_sektora);
@@ -510,8 +565,9 @@ void idz_do_bramki() {
     int przepuszczeni = 0;
     int wpychanie = 0;
     #define MAX_PRZEPUSZCZEN 5
+    // Po tylu przepuszczeniach kibic moze zaczac wpychanie
 
-    int wybrane_stanowisko = rand() % 2;
+    int wybrane_stanowisko = rand() % 2; // Losowy wybor stanowiska
     int moje_miejsce = -1;
     int retry_bramka = 1;
 
@@ -526,6 +582,7 @@ void idz_do_bramki() {
         if (stan_hali->ewakuacja_trwa) return;
 
         if (stan_hali->sektor_zablokowany[numer_sektora]) {
+            // Dynamiczna blokada w trakcie oczekiwania
             printf("%sKibic %d: Sektor %d zablokowany podczas czekania. Czekam...%s\n",
                    KOLOR_ZOLTY, getpid(), numer_sektora, KOLOR_RESET);
             while (stan_hali->sektor_zablokowany[numer_sektora]) {
@@ -544,17 +601,20 @@ void idz_do_bramki() {
         Bramka *b = &stan_hali->bramki[numer_sektora][wybrane_stanowisko];
 
         if (wpychanie && b->pid_agresora == 0) {
+            // Ustaw agresora dla bramki
             b->pid_agresora = getpid();
             agresor_aktywny = 1;
             agresor_sektor = numer_sektora;
             agresor_stanowisko = wybrane_stanowisko;
         }
         if (b->pid_agresora != 0 && b->pid_agresora != getpid()) {
+            // Sprawdz, czy agresor nadal zyje
             if (kill(b->pid_agresora, 0) == -1 && errno == ESRCH) {
                 b->pid_agresora = 0;
             }
         }
         if (b->pid_agresora != 0 && b->pid_agresora != getpid()) {
+            // Czekaj na zwolnienie bramki przez agresora
             operacje[0].sem_op = 1;
             semop_retry_ctx(sem_id, operacje, 1, "semop unlock bramka miejsc");
             struct sembuf wait_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), -1, 0};
@@ -562,15 +622,17 @@ void idz_do_bramki() {
             continue;
         }
 
-        int wolne = 0;
+        int wolne = 0; // Liczba wolnych miejsc w stanowisku
         for(int i=0; i<3; i++) if(b->miejsca[i].pid_kibica == 0) wolne++;
 
         if (wolne > 0 && (b->obecna_druzyna == 0 || b->obecna_druzyna == moja_druzyna)) {
+            // Jest wolny slot i zgodnosc druzyny
             if (b->obecna_druzyna == 0) {
                 b->obecna_druzyna = moja_druzyna;
             }
             for (int i = 0; i < 3; i++) {
                 if (b->miejsca[i].pid_kibica == 0) {
+                    // Wypelnij dane kibica w slocie
                     b->miejsca[i].druzyna = moja_druzyna;
                     b->miejsca[i].ma_przedmiot = mam_noz;
                     b->miejsca[i].wiek = moj_wiek;
@@ -578,9 +640,11 @@ void idz_do_bramki() {
                     b->miejsca[i].pid_kibica = getpid();
                     moje_miejsce = i;
                     przepuszczeni = 0;
+                    // Zasygnalizuj pracownikowi, ze jest kto obslugiwac
                     struct sembuf sig_praca = {SEM_PRACA(numer_sektora), 1, 0};
                     semop_retry_ctx(sem_id, &sig_praca, 1, "semop sig praca");
                     if (b->pid_agresora == getpid()) {
+                        // Agresor zostal obsluzony - zwolnij
                         b->pid_agresora = 0;
                         agresor_aktywny = 0;
                     }
@@ -589,6 +653,7 @@ void idz_do_bramki() {
             }
         } else {
             if (!wpychanie) {
+                // Licznik przepuszczen - decyzja o wpychaniu
                 przepuszczeni++;
                 if (przepuszczeni >= MAX_PRZEPUSZCZEN) {
                     printf("%sKibic %d: FRUSTRACJA! Przepuscilem %d osob! WPYCHAM SIE!%s\n",
@@ -612,6 +677,7 @@ void idz_do_bramki() {
         if (semop_retry_ctx(sem_id, operacje, 1, "semop unlock bramka miejsc") == -1) return;
 
         if (moje_miejsce == -1) {
+            // Brak miejsca - poczekaj na sygnal bramki
             struct sembuf wait_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), -1, 0};
             if (semop_retry_ctx(sem_id, &wait_bramka, 1, "semop wait bramka") == -1) return;
         }
@@ -624,11 +690,13 @@ void idz_do_bramki() {
             if (stan_hali->ewakuacja_trwa) return;
 
             if (stan_hali->sektor_zablokowany[numer_sektora]) {
+                // Blokada w trakcie kontroli
                 struct sembuf wait_sek = {SEM_SEKTOR(numer_sektora), -1, 0};
                 if (semop_retry_ctx(sem_id, &wait_sek, 1, "semop wait sektor") == -1) return;
                 continue;
             }
 
+            // Oczekiwanie na wynik kontroli stanowiska
             struct sembuf wait_slot = {SEM_SLOT(numer_sektora, wybrane_stanowisko, moje_miejsce), -1, 0};
             if (semop_retry_ctx(sem_id, &wait_slot, 1, "semop wait slot") == -1) return;
 
@@ -636,6 +704,7 @@ void idz_do_bramki() {
                        .miejsca[moje_miejsce].zgoda_na_wejscie;
 
             if (zgoda == 2) {
+                // Odrzucenie: noz
                 printf("%sKibic %d: Zostalem wyrzucony - znaleziono noz!%s\n",
                        KOLOR_CZERWONY, getpid(), KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d wyrzucony - noz", getpid());
@@ -644,6 +713,7 @@ void idz_do_bramki() {
                 semop_retry_ctx(sem_id, &sig_bramka, 1, "semop sig bramka");
                 return;
             } else if (zgoda == 3) {
+                // Odrzucenie: wiek bez opiekuna
                 printf("%sKibic %d: Zawrocony - za mlody bez opiekuna!%s\n",
                        KOLOR_ZOLTY, getpid(), KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d zawrocony - wiek", getpid());
@@ -652,6 +722,7 @@ void idz_do_bramki() {
                 semop_retry_ctx(sem_id, &sig_bramka, 1, "semop sig bramka");
                 return;
             } else if (zgoda == 4) {
+                // Odrzucenie: zla druzyna (powrot do kolejki)
                 printf("%sKibic %d: Przepuszczony - zla druzyna, wracam do kolejki%s\n",
                        KOLOR_ZOLTY, getpid(), KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d przepuszczony - zla druzyna", getpid());
@@ -755,6 +826,7 @@ void idz_do_bramki() {
 int main(int argc, char *argv[]) {
     setlinebuf(stdout);
 
+    // Losowe ziarno dla zachowan kibica
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand((unsigned int)(ts.tv_nsec ^ getpid()));
@@ -763,6 +835,7 @@ int main(int argc, char *argv[]) {
     inicjalizuj();
     if (stan_hali->ewakuacja_trwa) return 0;
 
+    // Tryb dziecka: uruchamiany przez rodzica
     if (argc >= 3 && strcmp(argv[1], "--dziecko") == 0) {
         jestem_dzieckiem = 1;
         pid_partnera = (pid_t)atoi(argv[2]);
@@ -783,6 +856,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    // Tryb kolegi: drugi bilet z tego samego zakupu
     if (argc >= 4 && strcmp(argv[1], "--kolega") == 0) {
         jestem_kolega = 1;
         moja_druzyna = atoi(argv[2]);
@@ -805,12 +879,14 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    // Domyslna sciezka: losowanie cech kibica
     moja_druzyna = (rand() % 2) ? DRUZYNA_A : DRUZYNA_B;
     jestem_vip = sprawdz_vip();
     mam_noz = ((rand() % 100) < SZANSA_NA_PRZEDMIOT);
 
     int tworze_rodzine = (!jestem_vip && (rand() % 100) < SZANSA_RODZINY);
 
+    // Rodzina: rodzic kupuje 2 bilety i tworzy dziecko
     if (tworze_rodzine) {
         jestem_rodzicem = 1;
         moj_wiek = WIEK_RODZICA_MIN + (rand() % (WIEK_RODZICA_MAX - WIEK_RODZICA_MIN + 1));
@@ -825,6 +901,7 @@ int main(int argc, char *argv[]) {
         sprobuj_kupic_bilet();
 
         if (ma_bilet) {
+            // Rejestruj rodzine i uruchom dziecko jako osobny proces
             id_rodziny = zarejestruj_rodzine(getpid(), 0);
 
             pid_t pid_dziecka = fork();
@@ -839,6 +916,7 @@ int main(int argc, char *argv[]) {
                 perror("execl kibic dziecko");
                 exit(EXIT_FAILURE);
             } else if (pid_dziecka > 0) {
+                // Rodzic kontynuuje wejsciem, dziecko idzie swoja sciezka
                 pid_partnera = pid_dziecka;
 
                 struct sembuf op = {0, -1, 0};
@@ -846,6 +924,7 @@ int main(int argc, char *argv[]) {
                     return 0;
                 }
                 if (id_rodziny >= 0) {
+                    // Ustal dane dziecka i sektor rodziny
                     stan_hali->rejestr_rodzin.rodziny[id_rodziny].pid_dziecka = pid_dziecka;
                     stan_hali->rejestr_rodzin.rodziny[id_rodziny].sektor = numer_sektora;
                 }
@@ -856,7 +935,7 @@ int main(int argc, char *argv[]) {
                        KOLOR_CYAN, getpid(), pid_dziecka, KOLOR_RESET);
                 rejestr_log("KIBIC", "PID %d rodzic utworzyl dziecko %d", getpid(), pid_dziecka);
 
-                idz_do_bramki();
+                idz_do_bramki(); // Rodzic wchodzi do bramki
                 if (waitpid(pid_dziecka, NULL, 0) == -1) {
                     perror("waitpid dziecko");
                 }
@@ -865,6 +944,7 @@ int main(int argc, char *argv[]) {
             }
         }
     } else {
+        // Standardowy kibic (ew. VIP) z 1-2 biletami
         moj_wiek = (rand() % 47) + 18;
         if (jestem_vip) {
             liczba_biletow = 1;
@@ -888,9 +968,10 @@ int main(int argc, char *argv[]) {
                    mam_noz ? "TAK" : "NIE",
                    liczba_biletow);
 
-        sprobuj_kupic_bilet();
+        sprobuj_kupic_bilet(); // Najpierw zakup biletu
         if (ma_bilet) {
             if (!jestem_vip && liczba_biletow == 2) {
+                // Drugi bilet = "kolega" jako osobny proces
                 pid_t pid_kolegi = fork();
                 if (pid_kolegi == 0) {
                     char arg_druzyna[16], arg_sektor[16];

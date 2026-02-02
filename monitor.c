@@ -1,3 +1,10 @@
+/*
+ * MONITOR.C - Prosty klient monitoringu hali (TCP)
+ *
+ * Odpowiedzialnosci:
+ * - Laczenie z serwerem w main.c
+ * - Odczyt i wyswietlanie statusu hali
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,9 +17,10 @@
 #define BUFOR_SIZE 1024
 
 int main(int argc, char *argv[]) {
-    int interwal = 2;
-    char *host = "127.0.0.1";
+    int interwal = 2;       // Co ile sekund odswiezac widok
+    char *host = "127.0.0.1"; // Adres serwera monitoringu
 
+    // Parsowanie argumentow -i, -s, -h
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
             interwal = atoi(argv[++i]);
@@ -31,7 +39,9 @@ int main(int argc, char *argv[]) {
     printf("\033[2J");
     printf("Monitor hali - laczenie z %s:%d (Ctrl+C aby zakonczyc)\n\n", host, SOCKET_MONITOR_PORT);
 
+    // Petla odpytywania serwera TCP
     while (1) {
+        // Utworzenie socketu do serwera monitoringu
         int sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock == -1) {
             perror("socket");
@@ -45,6 +55,7 @@ int main(int argc, char *argv[]) {
         addr.sin_port = htons(SOCKET_MONITOR_PORT);
 
         if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+            // Nieprawidlowy adres hosta
             fprintf(stderr, "Nieprawidlowy adres: %s\n", host);
             if (close(sock) == -1) {
                 perror("close");
@@ -53,6 +64,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+            // Brak polaczenia z serwerem
             printf("\r\033[K[OFFLINE] Brak polaczenia z hala...");
             fflush(stdout);
             if (close(sock) == -1) {
@@ -64,12 +76,14 @@ int main(int argc, char *argv[]) {
 
         char bufor[BUFOR_SIZE];
         memset(bufor, 0, sizeof(bufor));
+        // Pobierz aktualny status
         int n = recv(sock, bufor, sizeof(bufor) - 1, 0);
         if (close(sock) == -1) {
             perror("close");
         }
 
         if (n <= 0) {
+            // Brak danych - sproboj ponownie po interwale
             sleep(interwal);
             continue;
         }
@@ -79,6 +93,7 @@ int main(int argc, char *argv[]) {
         printf("|         MONITOR HALI (SOCKET)            |\n");
         printf("+==========================================+\n\n");
 
+        // Parsowanie wpisow w formacie HALA|KEY:VALUE|...
         char *token = strtok(bufor, "|");
         while (token != NULL) {
             if (strncmp(token, "HALA", 4) == 0) {
@@ -121,7 +136,7 @@ int main(int argc, char *argv[]) {
                            blok ? "\033[33m(ZABLOKOWANY)\033[0m" : "");
                 }
             }
-            token = strtok(NULL, "|");
+            token = strtok(NULL, "|"); // Kolejny token
         }
 
         printf("\n------------------------------------------\n");

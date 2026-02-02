@@ -1,10 +1,19 @@
+/*
+ * KIEROWNIK.C - Proces kierownika
+ *
+ * Odpowiedzialnosci:
+ * - Odbior zgloszen z FIFO od pracownikow
+ * - Obsluga ewakuacji i odblokowan
+ * - Prezentacja statusu hali i menu sterowania
+ */
 #include "common.h"
 
-int shm_id = -1;
-int sem_id = -1;
-int fifo_fd = -1;
-StanHali *stan_hali = NULL;
+int shm_id = -1;         // ID pamieci dzielonej
+int sem_id = -1;         // ID semaforow
+int fifo_fd = -1;        // Deskryptor FIFO zgloszen
+StanHali *stan_hali = NULL; // Wskaznik na stan hali
 
+/* Sprzatanie zasobow procesu kierownika */
 void obsluga_wyjscia() {
     if (fifo_fd != -1) {
         if (close(fifo_fd) == -1) {
@@ -18,6 +27,7 @@ void obsluga_wyjscia() {
     }
 }
 
+/* Prosty handler SIGINT dla kierownika */
 void obsluga_sigint(int sig) {
     (void)sig;
     printf("\nKierownik: Zamykanie...\n");
@@ -25,6 +35,7 @@ void obsluga_sigint(int sig) {
     exit(0);
 }
 
+/* Podlaczenie do zasobow IPC i otwarcie FIFO */
 void inicjalizuj() {
     key_t klucz_shm = ftok(".", KLUCZ_SHM);
     SPRAWDZ(klucz_shm);
@@ -53,10 +64,12 @@ void inicjalizuj() {
     rejestr_init(NULL, 0);
 }
 
+/* Watek odbioru komunikatow FIFO od pracownikow */
 void* watek_fifo(void *arg) {
     (void)arg;
     if (fifo_fd == -1) return NULL;
 
+    // Petla odczytu zgloszen od pracownikow
     while (1) {
         KomunikatFifo kom;
         size_t offset = 0;
@@ -85,6 +98,7 @@ void* watek_fifo(void *arg) {
         rejestr_log("KIEROWNIK", "Zgloszenie od sektora %d: %s", kom.nr_sektora, kom.wiadomosc);
 
         if (kom.typ == 1) {
+            // Raport o zakonczeniu ewakuacji sektora
             struct sembuf lock = {0, -1, 0};
             struct sembuf unlock = {0, 1, 0};
             if (semop(sem_id, &lock, 1) == -1) {
@@ -119,6 +133,7 @@ void* watek_fifo(void *arg) {
     return NULL;
 }
 
+/* Wyswietlenie czytelnego statusu hali */
 void pokaz_status() {
     printf("\n%s", KOLOR_BOLD);
     printf("+=========================================================+\n");
@@ -184,6 +199,7 @@ void pokaz_status() {
                       stan_hali->liczba_vip, stan_hali->limit_vip);
 }
 
+/* Wyslanie sygnalu blokady sektora */
 void wyslij_blokade() {
     int nr_sektora = bezpieczny_scanf_int(
         "Podaj numer sektora do zablokowania (0-7): ",
@@ -217,7 +233,9 @@ void wyslij_blokade() {
     }
 }
 
+/* Wyslanie sygnalu odblokowania sektora */
 void wyslij_odblokowanie() {
+    // Odblokowanie sektora na zadanie kierownika
     int nr_sektora = bezpieczny_scanf_int(
         "Podaj numer sektora do odblokowania (0-7): ",
         0,
@@ -250,12 +268,14 @@ void wyslij_odblokowanie() {
     }
 }
 
+/* Rozpoczecie ewakuacji calej hali */
 void zarzadzaj_ewakuacja() {
     if (stan_hali->ewakuacja_trwa) {
         printf("%s[UWAGA] Ewakuacja juz trwa!%s\n", KOLOR_ZOLTY, KOLOR_RESET);
         return;
     }
 
+    // Ogolny komunikat o ewakuacji
     printf("\n%s", KOLOR_CZERWONY);
     printf("+=======================================+\n");
     printf("|   UWAGA: OGLASZAM EWAKUACJE HALI!     |\n");
@@ -264,12 +284,15 @@ void zarzadzaj_ewakuacja() {
 
     rejestr_log("KIEROWNIK", "EWAKUACJA HALI OGLOSZONA");
 
+    // Zresetuj flagi ewakuacji sektorow
     for (int i = 0; i < LICZBA_SEKTOROW; i++) {
         stan_hali->sektor_ewakuowany[i] = 0;
     }
 
+    // Ustaw flage ewakuacji globalnej
     stan_hali->ewakuacja_trwa = 1;
 
+    // Sygnal do wszystkich procesow w grupie
     if (kill(0, SYGNAL_EWAKUACJA) == -1) {
         perror("kill ewakuacja");
     }
@@ -289,11 +312,11 @@ int main() {
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
 
-    signal(SYGNAL_EWAKUACJA, SIG_IGN);
+    signal(SYGNAL_EWAKUACJA, SIG_IGN); // Kierownik ignoruje sygnal ewakuacji
 
     inicjalizuj();
 
-    pthread_t watek_fifo_id;
+    pthread_t watek_fifo_id; // Watek do odbioru zgloszen FIFO
     if (pthread_create(&watek_fifo_id, NULL, watek_fifo, NULL) != 0) {
         perror("pthread_create fifo");
     } else {
@@ -308,9 +331,10 @@ int main() {
     printf("+=======================================+\n");
     printf("%s", KOLOR_RESET);
 
-    stan_hali->pid_kierownika = getpid();
+    stan_hali->pid_kierownika = getpid(); // Rejestr PID kierownika
     rejestr_log("KIEROWNIK", "Start PID %d", getpid());
 
+    // Menu sterowania hala
     while (1) {
         printf("\n+-------------------------------+\n");
         printf("|        MENU KIEROWNIKA        |\n");

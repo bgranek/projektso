@@ -47,9 +47,9 @@
 #define KLUCZ_MSG 102   // Klucz kolejki komunikatow
 
 /* === PARAMETRY HALI === */
-#define POJEMNOSC_DOMYSLNA 1600
-#define POJEMNOSC_MIN 80
-#define POJEMNOSC_MAX 100000
+#define POJEMNOSC_DOMYSLNA 1600 // Domyslna pojemnosc hali
+#define POJEMNOSC_MIN 80         // Minimalna dozwolona pojemnosc
+#define POJEMNOSC_MAX 100000     // Maksymalna dozwolona pojemnosc
 
 #define LICZBA_SEKTOROW 8              // Sektory zwykle (0-7)
 #define SEKTOR_VIP 8                   // Indeks sektora VIP
@@ -103,8 +103,8 @@
 #define SEM_KASA(id) (SEM_KASA_BASE + (id))                       // id kasy
 
 /* === DRUZYNY === */
-#define DRUZYNA_A 1
-#define DRUZYNA_B 2
+#define DRUZYNA_A 1  // Druzyna gospodarzy
+#define DRUZYNA_B 2  // Druzyna gosci
 
 /* === RODZINY === */
 #define SZANSA_RODZINY 15      // % szansy ze kibic jest rodzicem
@@ -124,8 +124,8 @@
 /* === CZASY === */
 #define CZAS_DO_MECZU_DOMYSLNY 30      // Sekundy do startu meczu
 #define CZAS_TRWANIA_MECZU_DOMYSLNY 60 // Czas trwania meczu
-#define CZAS_MIN 10
-#define CZAS_MAX 3600
+#define CZAS_MIN 10                    // Minimalny czas w sekundach
+#define CZAS_MAX 3600                  // Maksymalny czas w sekundach
 
 /* Fazy meczu - kontroluja zachowanie kibicow */
 typedef enum {
@@ -198,8 +198,8 @@ typedef struct {
 /* Rejestr wszystkich rodzin w pamieci dzielonej */
 typedef struct {
     Rodzina rodziny[MAX_RODZIN];
-    int liczba_rodzin;
-    pthread_mutex_t mutex;
+    int liczba_rodzin;      // Aktualna liczba aktywnych rodzin
+    pthread_mutex_t mutex;  // Ochrona rejestru rodzin
 } RejestrRodzin;
 
 /*
@@ -286,6 +286,7 @@ typedef struct {
     char wiadomosc[128];      // Opis tekstowy
 } KomunikatFifo;
 
+/* Parsowanie liczby z walidacja zakresu */
 static inline int parsuj_int(const char *str, const char *nazwa, int min, int max) {
     char *endptr;
     errno = 0;
@@ -310,6 +311,7 @@ static inline int parsuj_int(const char *str, const char *nazwa, int min, int ma
     return (int)val;
 }
 
+/* Bezpieczny odczyt liczby z stdin */
 static inline int bezpieczny_scanf_int(const char *prompt, int min, int max) {
     int wartosc;
     char bufor[256];
@@ -350,6 +352,7 @@ static inline int bezpieczny_scanf_int(const char *prompt, int min, int max) {
     return wartosc;
 }
 
+/* semop z ponawianiem po EINTR */
 static inline int semop_retry_ctx(int semid, struct sembuf *ops, size_t nops, const char *ctx) {
     while (semop(semid, ops, nops) == -1) {
         if (errno == EINTR) continue;

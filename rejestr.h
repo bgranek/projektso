@@ -1,3 +1,8 @@
+/*
+ * REJESTR.H - Prosty rejestr zdarzen do pliku symulacja.log
+ *
+ * Funkcje inline uzywane przez wszystkie procesy.
+ */
 #ifndef REJESTR_H
 #define REJESTR_H
 
@@ -12,18 +17,20 @@
 #include <pthread.h>
 #include <sys/file.h>
 
-#define REJESTR_PLIK "symulacja.log"
-#define REJESTR_BUFOR 512
+#define REJESTR_PLIK "symulacja.log" // Domyslny plik logu
+#define REJESTR_BUFOR 512             // Rozmiar bufora wpisu
 
-static int rejestr_fd = -1;
-static pthread_mutex_t rejestr_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int rejestr_fd = -1; // Wspolny deskryptor pliku logu
+static pthread_mutex_t rejestr_mutex = PTHREAD_MUTEX_INITIALIZER; // Ochrona wpisow
 
+/* Otwarcie rejestru (opcjonalnie z wyczyszczeniem) */
 static inline int rejestr_init(const char *nazwa_pliku, int truncate) {
     if (nazwa_pliku == NULL) {
         nazwa_pliku = REJESTR_PLIK;
     }
 
     if (truncate) {
+        // Tworzenie nowego pliku logu
         int tmp_fd = creat(nazwa_pliku, 0600);
         if (tmp_fd == -1) {
             perror("creat rejestr");
@@ -41,6 +48,7 @@ static inline int rejestr_init(const char *nazwa_pliku, int truncate) {
     }
 
     if (truncate) {
+        // Naglowek nowej symulacji
         char naglowek[REJESTR_BUFOR];
         time_t teraz = time(NULL);
         struct tm *t = localtime(&teraz);
@@ -66,8 +74,10 @@ static inline int rejestr_init(const char *nazwa_pliku, int truncate) {
     return 0;
 }
 
+/* Zamkniecie rejestru i zapis stopki */
 static inline void rejestr_zamknij() {
     if (rejestr_fd != -1) {
+        // Stopka z czasem zakonczenia
         char stopka[REJESTR_BUFOR];
         time_t teraz = time(NULL);
         struct tm *t = localtime(&teraz);
@@ -95,9 +105,11 @@ static inline void rejestr_zamknij() {
     }
 }
 
+/* Wpis zdarzenia do rejestru */
 static inline void rejestr_log(const char *kategoria, const char *format, ...) {
     if (rejestr_fd == -1) return;
     
+    // Mutex chroni przed jednoczesnym formatowaniem
     pthread_mutex_lock(&rejestr_mutex);
     if (flock(rejestr_fd, LOCK_EX) == -1) {
         perror("flock lock rejestr");
@@ -132,9 +144,11 @@ static inline void rejestr_log(const char *kategoria, const char *format, ...) {
     pthread_mutex_unlock(&rejestr_mutex);
 }
 
+/* Wpis cyklicznych statystyk */
 static inline void rejestr_statystyki(int pojemnosc, int kibicow, int vip, int limit_vip) {
     if (rejestr_fd == -1) return;
     
+    // Osobny wpis statystyk
     pthread_mutex_lock(&rejestr_mutex);
     if (flock(rejestr_fd, LOCK_EX) == -1) {
         perror("flock lock rejestr");
@@ -160,9 +174,11 @@ static inline void rejestr_statystyki(int pojemnosc, int kibicow, int vip, int l
     pthread_mutex_unlock(&rejestr_mutex);
 }
 
+/* Wpis stanu pojedynczego sektora */
 static inline void rejestr_sektor(int nr, int zajete, int pojemnosc, int zablokowany) {
     if (rejestr_fd == -1) return;
     
+    // Wpis stanu sektora
     pthread_mutex_lock(&rejestr_mutex);
     if (flock(rejestr_fd, LOCK_EX) == -1) {
         perror("flock lock rejestr");

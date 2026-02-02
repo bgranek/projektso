@@ -41,6 +41,7 @@ void usun_fifo() {
 void sprzataj_zasoby() {
     rejestr_log("MAIN", "Rozpoczynam sprzatanie zasobow");
 
+    // Zapis statystyk przed odlaczeniem pamieci
     if (stan_hali != NULL) {
         rejestr_statystyki(
             stan_hali->pojemnosc_calkowita,
@@ -53,6 +54,7 @@ void sprzataj_zasoby() {
         }
     }
     if (shm_id != -1) {
+        // Usuniecie pamieci dzielonej
         if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
             perror("shmctl IPC_RMID");
         }
@@ -60,6 +62,7 @@ void sprzataj_zasoby() {
         rejestr_log("MAIN", "Usunieto pamiec dzielona");
     }
     if (sem_id != -1) {
+        // Usuniecie semaforow
         if (semctl(sem_id, 0, IPC_RMID) == -1) {
             perror("semctl IPC_RMID");
         }
@@ -67,6 +70,7 @@ void sprzataj_zasoby() {
         rejestr_log("MAIN", "Usunieto semafory");
     }
     if (msg_id != -1) {
+        // Usuniecie kolejki komunikatow
         if (msgctl(msg_id, IPC_RMID, NULL) == -1) {
             perror("msgctl IPC_RMID");
         }
@@ -136,7 +140,7 @@ void inicjalizuj_zasoby() {
         exit(EXIT_FAILURE);
     }
 
-    memset(stan_hali, 0, sizeof(StanHali));
+    memset(stan_hali, 0, sizeof(StanHali)); // Wyzeruj stan startowy
 
     // Inicjalizacja parametrow hali
     stan_hali->pojemnosc_calkowita = pojemnosc_K;
@@ -144,7 +148,7 @@ void inicjalizuj_zasoby() {
     stan_hali->limit_vip = (pojemnosc_K * 3) / 1000;  // 0.3% * K
     stan_hali->pojemnosc_vip = stan_hali->limit_vip;
 
-    stan_hali->pid_main = getpid();
+    stan_hali->pid_main = getpid(); // Zapamietaj PID main
     stan_hali->pid_kierownika = 0;
     stan_hali->liczba_vip = 0;
     stan_hali->wszystkie_bilety_sprzedane = 0;
@@ -242,11 +246,13 @@ static void zakoncz_symulacje(const char *powod) {
         rejestr_log("MAIN", "%s", powod);
     }
 
+    // Zatrzymaj obsluge SIGTERM w mainie i rozeslij SIGTERM do grupy
     signal(SIGTERM, SIG_IGN);
     if (kill(0, SIGTERM) == -1) {
         perror("kill SIGTERM");
     }
 
+    // Wybudzenie stanowisk i kas oczekujacych na semaforach
     for (int s = 0; s < LICZBA_SEKTOROW; s++) {
         struct sembuf wake_workers = {SEM_PRACA(s), 10, 0};
         if (semop(sem_id, &wake_workers, 1) == -1) {
@@ -254,6 +260,7 @@ static void zakoncz_symulacje(const char *powod) {
         }
     }
 
+    // Wybudzenie kas czekajacych na aktywacje
     for (int k = 0; k < LICZBA_KAS; k++) {
         struct sembuf wake_kasa = {SEM_KASA(k), 10, 0};
         if (semop(sem_id, &wake_kasa, 1) == -1) {
@@ -261,11 +268,13 @@ static void zakoncz_symulacje(const char *powod) {
         }
     }
 
+    // Awaryjne odblokowanie mutexow (na wypadek oczekiwania)
     struct sembuf wake_mutex = {0, 20, 0};
     if (semop(sem_id, &wake_mutex, 1) == -1) {
         perror("semop wake mutex");
     }
 
+    // Oczekiwanie na zakonczenie wszystkich procesow potomnych
     while (1) {
         pid_t w = wait(NULL);
         if (w > 0) continue;
@@ -290,6 +299,7 @@ static void sleep_cale(int sekundy) {
             perror("nanosleep");
             break;
         }
+        // Jesli przerwane sygnalem, sprawdz flage pracy
         if (!main_dziala) return;
     }
 }
@@ -305,6 +315,7 @@ static void sleep_cale(int sekundy) {
 void* watek_czasu_meczu(void *arg) {
     (void)arg;
 
+    // Odczekaj do startu meczu
     sleep_cale(stan_hali->czas_do_meczu);  // Czekanie na start meczu
     if (!main_dziala) return NULL;
 
@@ -324,6 +335,7 @@ void* watek_czasu_meczu(void *arg) {
         return NULL;
     }
 
+    // Kibice przestaja blokowac sie na starcie meczu
     if (semctl(sem_id, SEM_START_MECZU, SETVAL, 0) == -1) {
         perror("semctl start meczu");
     }
@@ -337,6 +349,7 @@ void* watek_czasu_meczu(void *arg) {
     rejestr_log("MAIN", "MECZ ROZPOCZETY - kibicow w hali: %d",
                stan_hali->suma_kibicow_w_hali);
 
+    // Odczekaj czas trwania meczu
     sleep_cale(stan_hali->czas_trwania_meczu);
     if (!main_dziala) return NULL;
 
@@ -354,6 +367,7 @@ void* watek_czasu_meczu(void *arg) {
         return NULL;
     }
 
+    // Obudz kibicow po zakonczeniu meczu
     struct sembuf sig_faza = {SEM_FAZA_MECZU, 10000, 0};
     if (semop(sem_id, &sig_faza, 1) == -1) {
         perror("semop SEM_FAZA_MECZU");
@@ -402,6 +416,7 @@ void* watek_generator_kibicow(void *arg) {
         }
 
         // Utworzenie nowego procesu kibica
+        // Nowy proces kibica
         pid_t pid = fork();
         if (pid == 0) {
             execl("./kibic", "kibic", NULL);
@@ -472,6 +487,7 @@ void* watek_serwera_socket(void *arg) {
         return NULL;
     }
 
+    // Start nasluchu na polaczenia monitoringu
     if (listen(server_fd, 5) == -1) {
         perror("listen");
         if (close(server_fd) == -1) {
@@ -483,6 +499,7 @@ void* watek_serwera_socket(void *arg) {
     printf("MAIN: Serwer socket monitoringu aktywny na porcie %d\n", SOCKET_MONITOR_PORT);
     rejestr_log("MAIN", "Serwer socket uruchomiony na porcie %d", SOCKET_MONITOR_PORT);
 
+    // Petla akceptowania polaczen monitoringu
     while (1) {
         int client_fd = accept(server_fd, NULL, NULL);
         if (client_fd == -1) {
@@ -494,6 +511,7 @@ void* watek_serwera_socket(void *arg) {
             perror("fcntl client");
         }
 
+        // Zbuduj tekstowy status hali
         char bufor[512];
         int suma_biletow = 0;
         for (int i = 0; i < LICZBA_WSZYSTKICH_SEKTOROW; i++) {
@@ -508,6 +526,7 @@ void* watek_serwera_socket(void *arg) {
             stan_hali->faza_meczu);
 
         for (int i = 0; i < LICZBA_SEKTOROW; i++) {
+            // Dodaj status sektora i liczbe osob
             len += snprintf(bufor + len, sizeof(bufor) - len,
                 "|S%d:%d/%d(osob:%d)%s",
                 i,
@@ -542,6 +561,7 @@ void uruchom_kasjerow() {
     for (int i = 0; i < LICZBA_KAS; i++) {
         pid_t pid = fork();
         if (pid == 0) {
+            // Dziecko: uruchom proces kasjera z numerem kasy
             char bufor[10];
             snprintf(bufor, sizeof(bufor), "%d", i);  // Przekazanie numeru kasy
             execl("./kasjer", "kasjer", bufor, NULL);
@@ -560,6 +580,7 @@ void uruchom_pracownikow() {
     for (int i = 0; i < LICZBA_SEKTOROW; i++) {
         pid_t pid = fork();
         if (pid == 0) {
+            // Dziecko: uruchom proces pracownika dla sektora
             char bufor[10];
             snprintf(bufor, sizeof(bufor), "%d", i);  // Przekazanie numeru sektora
             execl("./pracownik", "pracownik", bufor, NULL);
@@ -592,6 +613,7 @@ void wyswietl_pomoc(const char *nazwa_programu) {
 int main(int argc, char *argv[]) {
     setlinebuf(stdout);
 
+    // Parsowanie argumentow wejsciowych
     int opt;
     while ((opt = getopt(argc, argv, "k:t:d:h")) != -1) {
         switch (opt) {
@@ -627,6 +649,7 @@ int main(int argc, char *argv[]) {
 
     rejestr_log("MAIN", "Start symulacji z pojemnoscia K=%d", pojemnosc_K);
 
+    // Konfiguracja sygnalow
     signal(SIGINT, obsluga_sygnalow);
     signal(SIGTERM, obsluga_sygnalow);
     signal(SIGCHLD, SIG_IGN);
@@ -636,6 +659,7 @@ int main(int argc, char *argv[]) {
     srand(time(NULL));
     inicjalizuj_zasoby();
 
+    // Uruchom watek monitoringu socket
     pthread_t watek_socket;
     if (pthread_create(&watek_socket, NULL, watek_serwera_socket, NULL) != 0) {
         perror("pthread_create socket");
@@ -643,11 +667,13 @@ int main(int argc, char *argv[]) {
         pthread_detach(watek_socket);
     }
 
+    // Uruchom watek faz meczu
     pthread_t watek_czasu;
     if (pthread_create(&watek_czasu, NULL, watek_czasu_meczu, NULL) != 0) {
         perror("pthread_create czas");
     }
 
+    // Uruchom generator kibicow
     pthread_t watek_generator;
     if (pthread_create(&watek_generator, NULL, watek_generator_kibicow, NULL) != 0) {
         perror("pthread_create generator");
@@ -664,6 +690,7 @@ int main(int argc, char *argv[]) {
 
     rejestr_log("MAIN", "System gotowy - rozpoczynam generowanie kibicow");
 
+    // Czekaj na zakonczenie meczu (sygnal z watku fazy)
     struct sembuf wait_faza = {SEM_FAZA_MECZU, -1, 0};
     while (semop(sem_id, &wait_faza, 1) == -1) {
         if (errno == EINTR) {
@@ -675,6 +702,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (shutdown_request) {
+        // Wczesne zakonczenie (SIGINT/SIGTERM)
         printf("\nMAIN: Otrzymano sygnal zakonczenia. Sprzatanie...\n");
         rejestr_log("MAIN", "Otrzymano sygnal zakonczenia");
         main_dziala = 0;
