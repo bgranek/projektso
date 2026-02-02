@@ -5,9 +5,10 @@ int shm_id = -1;
 int sem_id = -1;
 StanHali *stan_hali = NULL;
 volatile sig_atomic_t ewakuacja_zgloszono = 0;
-volatile sig_atomic_t praca_trwa = 1;
+int praca_trwa = 1;
 
 pthread_t watki_stanowisk[2];
+pthread_t watek_sygnalow_id;
 pthread_mutex_t mutex_sektor = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond_sektor = PTHREAD_COND_INITIALIZER;
 
@@ -17,8 +18,10 @@ typedef struct {
 } DaneWatku;
 
 void obsluga_wyjscia() {
+    pthread_mutex_lock(&mutex_sektor);
     praca_trwa = 0;
     pthread_cond_broadcast(&cond_sektor);
+    pthread_mutex_unlock(&mutex_sektor);
 
     pthread_mutex_destroy(&mutex_sektor);
     pthread_cond_destroy(&cond_sektor);
@@ -31,39 +34,20 @@ void obsluga_wyjscia() {
     }
 }
 
-void handler_blokada(int sig) {
-    (void)sig;
-    if (stan_hali != NULL && id_sektora >= 0) {
-        stan_hali->sektor_zablokowany[id_sektora] = 1;
-        const char *msg = "[BLOKADA] SEKTOR ZABLOKOWANY\n";
-        write(STDOUT_FILENO, msg, strlen(msg));
-    }
+static void ustaw_praca_stop() {
+    pthread_mutex_lock(&mutex_sektor);
+    praca_trwa = 0;
+    pthread_cond_broadcast(&cond_sektor);
+    pthread_mutex_unlock(&mutex_sektor);
 }
 
-void handler_odblokowanie(int sig) {
-    (void)sig;
+static void ustaw_blokade(int blokada) {
     if (stan_hali != NULL && id_sektora >= 0) {
-        stan_hali->sektor_zablokowany[id_sektora] = 0;
-        struct sembuf sig_odblok = {SEM_SEKTOR(id_sektora), 100, 0};
-        semop_retry_ctx(sem_id, &sig_odblok, 1, "semop sig odblok");
+        pthread_mutex_lock(&mutex_sektor);
+        stan_hali->sektor_zablokowany[id_sektora] = blokada;
         pthread_cond_broadcast(&cond_sektor);
-        const char *msg = "[ODBLOKOWANIE] SEKTOR ODBLOKOWANY\n";
-        write(STDOUT_FILENO, msg, strlen(msg));
+        pthread_mutex_unlock(&mutex_sektor);
     }
-}
-
-void handler_ewakuacja(int sig) {
-    (void)sig;
-    const char *msg = "[EWAKUACJA] Otwieram bramki awaryjne.\n";
-    write(STDOUT_FILENO, msg, strlen(msg));
-    praca_trwa = 0;
-    pthread_cond_broadcast(&cond_sektor);
-}
-
-void handler_term(int sig) {
-    (void)sig;
-    praca_trwa = 0;
-    pthread_cond_broadcast(&cond_sektor);
 }
 
 void inicjalizuj() {
@@ -89,22 +73,69 @@ void inicjalizuj() {
     }
 }
 
-void rejestruj_sygnaly() {
-    struct sigaction sa;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
+static void* watek_sygnalow(void *arg) {
+    (void)arg;
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SYGNAL_BLOKADA_SEKTORA);
+    sigaddset(&set, SYGNAL_ODBLOKOWANIE_SEKTORA);
+    sigaddset(&set, SYGNAL_EWAKUACJA);
+    sigaddset(&set, SIGTERM);
 
-    sa.sa_handler = handler_blokada;
-    sigaction(SYGNAL_BLOKADA_SEKTORA, &sa, NULL);
+    while (1) {
+        int sig = sigwaitinfo(&set, NULL);
+        if (sig == -1) {
+            if (errno == EINTR) continue;
+            perror("sigwaitinfo");
+            continue;
+        }
 
-    sa.sa_handler = handler_odblokowanie;
-    sigaction(SYGNAL_ODBLOKOWANIE_SEKTORA, &sa, NULL);
+        if (sig == SYGNAL_BLOKADA_SEKTORA) {
+            ustaw_blokade(1);
+            const char *msg = "[BLOKADA] SEKTOR ZABLOKOWANY\n";
+            write(STDOUT_FILENO, msg, strlen(msg));
+        } else if (sig == SYGNAL_ODBLOKOWANIE_SEKTORA) {
+            ustaw_blokade(0);
+            struct sembuf sig_odblok = {SEM_SEKTOR(id_sektora), 100, 0};
+            semop_retry_ctx(sem_id, &sig_odblok, 1, "semop sig odblok");
+            const char *msg = "[ODBLOKOWANIE] SEKTOR ODBLOKOWANY\n";
+            write(STDOUT_FILENO, msg, strlen(msg));
+        } else if (sig == SYGNAL_EWAKUACJA) {
+            const char *msg = "[EWAKUACJA] Otwieram bramki awaryjne.\n";
+            write(STDOUT_FILENO, msg, strlen(msg));
+            ustaw_praca_stop();
+            struct sembuf wake = {SEM_PRACA(id_sektora), 2, 0};
+            semop_retry_ctx(sem_id, &wake, 1, "semop wake praca");
+            break;
+        } else if (sig == SIGTERM) {
+            ustaw_praca_stop();
+            struct sembuf wake = {SEM_PRACA(id_sektora), 2, 0};
+            semop_retry_ctx(sem_id, &wake, 1, "semop wake praca");
+            break;
+        }
+    }
+    return NULL;
+}
 
-    sa.sa_handler = handler_ewakuacja;
-    sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
+static void uruchom_watek_sygnalow() {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SYGNAL_BLOKADA_SEKTORA);
+    sigaddset(&set, SYGNAL_ODBLOKOWANIE_SEKTORA);
+    sigaddset(&set, SYGNAL_EWAKUACJA);
+    sigaddset(&set, SIGTERM);
 
-    sa.sa_handler = handler_term;
-    sigaction(SIGTERM, &sa, NULL);
+    int rc = pthread_sigmask(SIG_BLOCK, &set, NULL);
+    if (rc != 0) {
+        errno = rc;
+        perror("pthread_sigmask");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pthread_create(&watek_sygnalow_id, NULL, watek_sygnalow, NULL) != 0) {
+        perror("pthread_create sygnaly");
+        exit(EXIT_FAILURE);
+    }
 }
 
 void wyslij_zgloszenie_do_kierownika(int typ, const char *wiadomosc) {
@@ -288,25 +319,27 @@ void* watek_stanowiska(void *arg) {
     printf("Pracownik %d: Watek stanowiska %d uruchomiony\n", id_sektora, nr_stanowiska);
     rejestr_log("PRACOWNIK", "Sektor %d: Watek stanowiska %d uruchomiony", id_sektora, nr_stanowiska);
     
-    while (praca_trwa) {
+    while (1) {
         pthread_mutex_lock(&mutex_sektor);
         
         while (stan_hali->sektor_zablokowany[id_sektora] && praca_trwa && !stan_hali->ewakuacja_trwa) {
             pthread_cond_wait(&cond_sektor, &mutex_sektor);
         }
         
+        int lokalna_praca = praca_trwa;
+        int lokalna_ewak = stan_hali->ewakuacja_trwa;
         pthread_mutex_unlock(&mutex_sektor);
         
-        if (!praca_trwa) break;
-        
-        if (stan_hali->ewakuacja_trwa) {
-            break;
-        }
+        if (!lokalna_praca || lokalna_ewak) break;
 
         struct sembuf wait_praca = {SEM_PRACA(id_sektora), -1, 0};
         if (semop_retry_ctx(sem_id, &wait_praca, 1, "semop wait praca") == -1) break;
 
-        if (!praca_trwa || stan_hali->ewakuacja_trwa) break;
+        pthread_mutex_lock(&mutex_sektor);
+        lokalna_praca = praca_trwa;
+        lokalna_ewak = stan_hali->ewakuacja_trwa;
+        pthread_mutex_unlock(&mutex_sektor);
+        if (!lokalna_praca || lokalna_ewak) break;
 
         struct sembuf operacje[1];
         operacje[0].sem_num = 0;
@@ -366,7 +399,7 @@ int main(int argc, char *argv[]) {
     }
 
     inicjalizuj();
-    rejestruj_sygnaly();
+    uruchom_watek_sygnalow();
 
     stan_hali->pidy_pracownikow[id_sektora] = getpid();
 
@@ -379,6 +412,8 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < 2; i++) {
         pthread_join(watki_stanowisk[i], NULL);
     }
+
+    pthread_join(watek_sygnalow_id, NULL);
 
     if (stan_hali->ewakuacja_trwa) {
         obsluguj_ewakuacje();
