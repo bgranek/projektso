@@ -416,7 +416,6 @@ void* watek_generator_kibicow(void *arg) {
         }
 
         // Utworzenie nowego procesu kibica
-        // Nowy proces kibica
         pid_t pid = fork();
         if (pid == 0) {
             execl("./kibic", "kibic", NULL);

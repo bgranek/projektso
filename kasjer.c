@@ -7,18 +7,11 @@
  * - Zamykanie kas przy wyprzedaniu/ewakuacji
  */
 #include "common.h"
-#include <time.h>
 
 volatile sig_atomic_t kasjer_dziala = 1; // Flaga pracy petli glownej
 
-/* Zatrzymanie pracy kasjera */
+/* Zatrzymanie pracy kasjera (SIGTERM i ewakuacja) */
 void handler_term(int sig) {
-    (void)sig;
-    kasjer_dziala = 0;
-}
-
-/* Ewakuacja zamyka kase */
-void handler_ewakuacja(int sig) {
     (void)sig;
     kasjer_dziala = 0;
 }
@@ -340,18 +333,13 @@ int main(int argc, char *argv[]) {
     srand(time(NULL) ^ (getpid() << 16));  // Losowe ziarno
     inicjalizuj();
 
-    // Rejestracja obslugi sygnalow
+    // Rejestracja obslugi sygnalow (ten sam handler dla SIGTERM i ewakuacji)
     struct sigaction sa;
     sa.sa_handler = handler_term;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
-
-    struct sigaction sa_ewak;
-    sa_ewak.sa_handler = handler_ewakuacja;
-    sigemptyset(&sa_ewak.sa_mask);
-    sa_ewak.sa_flags = 0;
-    sigaction(SYGNAL_EWAKUACJA, &sa_ewak, NULL);
+    sigaction(SYGNAL_EWAKUACJA, &sa, NULL);
 
     stan_hali->pidy_kasjerow[id_kasjera] = getpid(); // Rejestr PID kasjera
     aktualizuj_status();

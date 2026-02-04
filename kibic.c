@@ -7,8 +7,6 @@
  * - Zachowanie w trakcie meczu i wyjscie/ewakuacja
  */
 #include "common.h"
-#include <time.h>
-#include <sys/wait.h>
 
 int shm_id = -1;
 int msg_id = -1;
@@ -246,12 +244,8 @@ int sprawdz_vip() {
         return 0;
     }
 
-    struct sembuf operacje[1];
-    operacje[0].sem_num = 0;
-    operacje[0].sem_op = -1;
-    operacje[0].sem_flg = 0;
-
-    if (semop_retry_ctx(sem_id, operacje, 1, "semop lock vip") == -1) {
+    struct sembuf op = {0, -1, 0};
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock vip") == -1) {
         return 0;
     }
 
@@ -260,8 +254,8 @@ int sprawdz_vip() {
         moze_byc_vip = 1;
     }
 
-    operacje[0].sem_op = 1;
-    if (semop_retry_ctx(sem_id, operacje, 1, "semop unlock vip") == -1) {
+    op.sem_op = 1;
+    if (semop_retry_ctx(sem_id, &op, 1, "semop unlock vip") == -1) {
         return 0;
     }
 
@@ -284,12 +278,8 @@ int wybierz_kase_aktywna() {
 }
 
 void aktualizuj_kolejke(int zmiana) {
-    struct sembuf operacje[1];
-    operacje[0].sem_num = 0;
-    operacje[0].sem_op = -1;
-    operacje[0].sem_flg = 0;
-
-    if (semop_retry_ctx(sem_id, operacje, 1, "semop lock kolejka") == -1) return;
+    struct sembuf op = {0, -1, 0};
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock kolejka") == -1) return;
 
     if (zmiana > 0) {
         int wybrana_kasa = wybierz_kase_aktywna();
@@ -314,22 +304,18 @@ void aktualizuj_kolejke(int zmiana) {
         moja_kasa = -1;
     }
 
-    operacje[0].sem_op = 1;
-    semop_retry_ctx(sem_id, operacje, 1, "semop unlock kolejka");
+    op.sem_op = 1;
+    semop_retry_ctx(sem_id, &op, 1, "semop unlock kolejka");
 }
 
 int wybierz_kase_bez_kolejki() {
-    struct sembuf operacje[1];
-    operacje[0].sem_num = 0;
-    operacje[0].sem_op = -1;
-    operacje[0].sem_flg = 0;
-
-    if (semop_retry_ctx(sem_id, operacje, 1, "semop lock kasa") == -1) return -1;
+    struct sembuf op = {0, -1, 0};
+    if (semop_retry_ctx(sem_id, &op, 1, "semop lock kasa") == -1) return -1;
 
     int wybrana = wybierz_kase_aktywna();
 
-    operacje[0].sem_op = 1;
-    semop_retry_ctx(sem_id, operacje, 1, "semop unlock kasa");
+    op.sem_op = 1;
+    semop_retry_ctx(sem_id, &op, 1, "semop unlock kasa");
 
     return wybrana;
 }
@@ -592,11 +578,8 @@ void idz_do_bramki() {
             }
         }
 
-        struct sembuf operacje[1];
-        operacje[0].sem_num = 0;
-        operacje[0].sem_op = -1;
-        operacje[0].sem_flg = 0;
-        if (semop_retry_ctx(sem_id, operacje, 1, "semop lock bramka miejsc") == -1) return;
+        struct sembuf op = {0, -1, 0};
+        if (semop_retry_ctx(sem_id, &op, 1, "semop lock bramka miejsc") == -1) return;
 
         Bramka *b = &stan_hali->bramki[numer_sektora][wybrane_stanowisko];
 
@@ -615,8 +598,8 @@ void idz_do_bramki() {
         }
         if (b->pid_agresora != 0 && b->pid_agresora != getpid()) {
             // Czekaj na zwolnienie bramki przez agresora
-            operacje[0].sem_op = 1;
-            semop_retry_ctx(sem_id, operacje, 1, "semop unlock bramka miejsc");
+            op.sem_op = 1;
+            semop_retry_ctx(sem_id, &op, 1, "semop unlock bramka miejsc");
             struct sembuf wait_bramka = {SEM_BRAMKA(numer_sektora, wybrane_stanowisko), -1, 0};
             if (semop_retry_ctx(sem_id, &wait_bramka, 1, "semop wait bramka") == -1) return;
             continue;
@@ -673,8 +656,8 @@ void idz_do_bramki() {
             }
         }
 
-        operacje[0].sem_op = 1;
-        if (semop_retry_ctx(sem_id, operacje, 1, "semop unlock bramka miejsc") == -1) return;
+        op.sem_op = 1;
+        if (semop_retry_ctx(sem_id, &op, 1, "semop unlock bramka miejsc") == -1) return;
 
         if (moje_miejsce == -1) {
             // Brak miejsca - poczekaj na sygnal bramki

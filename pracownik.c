@@ -22,7 +22,6 @@ pthread_cond_t cond_sektor = PTHREAD_COND_INITIALIZER;    // Budzenie stanowisk
 
 typedef struct {
     int id_stanowiska;
-    int id_sektora;
 } DaneWatku;
 
 /* Sprzatanie procesu pracownika */
@@ -411,7 +410,6 @@ void uruchom_watki_stanowisk() {
             exit(EXIT_FAILURE);
         }
         dane->id_stanowiska = i;
-        dane->id_sektora = id_sektora;
         
         if (pthread_create(&watki_stanowisk[i], NULL, watek_stanowiska, dane) != 0) {
             perror("pthread_create");
