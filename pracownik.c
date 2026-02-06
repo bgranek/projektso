@@ -388,7 +388,10 @@ void* watek_stanowiska(void *arg) {
         // Sekcja krytyczna dla obslugi stanowiska
         if (semop_retry_ctx(sem_id, operacje, 1, "semop lock obsluga") == -1) break;
 
-        obsluz_stanowisko(nr_stanowiska);
+        // Obslugujemy OBA stanowiska, bo SEM_PRACA jest wspolny dla sektora
+        // i moze obudzic dowolny watek
+        obsluz_stanowisko(0);
+        obsluz_stanowisko(1);
         
         operacje[0].sem_op = 1;
         semop_retry_ctx(sem_id, operacje, 1, "semop unlock obsluga");
