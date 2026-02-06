@@ -748,58 +748,204 @@ msgrcv(msg_id, &odp, sizeof(odp) - sizeof(long), getpid(), 0);
 
 ## 19. Testy
 
-Poniżej cztery testy udokumentowane na podstawie logów z pliku `symulacja.log` (ostatnia symulacja).
+Poniżej cztery testy weryfikujące kluczowe funkcjonalności systemu. Każdy test znajduje się w osobnym folderze (`test1/`, `test2/`, `test3/`, `test4/`) z zmodyfikowaną wersją kodu źródłowego.
 
-### Test 1 - Działanie agresji (wpychanie po 5 przepuszczeniach)
+### Test 1 - Weryfikacja pojemności hali (K=1600)
 
-- **Cel:** potwierdzić, że kibic po przepuszczeniu 5 osób przechodzi w tryb agresji.
-- **Oczekiwany rezultat:** w logu pojawia się wpis o frustracji po 5 przepuszczeniach.
-- **Wynik:** **OK** - wpisy w logu potwierdzają przejście w tryb agresji.
+- **Cel:** Sprawdzenie czy hala prawidłowo ogranicza liczbę kibiców do pojemności K=1600.
+- **Założenia:**
+  - Generujemy 10 000 kibiców (bez opóźnienia, z barierą)
+  - Nikt nie ma noża (`SZANSA_NA_PRZEDMIOT = 0`)
+  - Nikt nie jest VIP (wyłączony w kodzie)
+  - Nikt nie ma dziecka (`SZANSA_RODZINY = 0`)
+- **Oczekiwany rezultat:** Dokładnie **1600 kibiców** wchodzi do hali (pojemność K), każdy sektor ma 200 osób.
+- **Wynik:** **OK** - monitor potwierdza 1600 osób w hali, wszystkie sektory pełne.
 
-Dowód w logu:
+Dowód z monitora (`test1/dowod_monitor.txt`):
 ```
-[15:03:53] [KIBIC     ] [PID:4518  ] PID 4518 frustracja po 5 przepuszczeniach
-```
+Status: ONLINE
 
-### Test 2 - Działanie kontroli na bramkach
+Osob w hali: 1600
+Biletow sprzedanych: 1600
+Bilety: DOSTEPNE
+Ewakuacja: NIE
+Faza: MECZ TRWA
 
-- **Cel:** potwierdzić wykrywanie niebezpiecznych przedmiotów oraz przepuszczanie poprawnych kibiców.
-- **Oczekiwany rezultat:** kibic z nożem jest zatrzymany, a prawidłowy kibic wpuszczony.
-- **Wynik:** **OK** - log pokazuje zatrzymanie za nóż i wpuszczenie kibica z poprawnymi danymi.
-
-Dowód w logu:
-```
-[15:03:50] [KONTROLA  ] [PID:4277  ] Sektor 2 Stan 0: Zatrzymano PID 4309 - noz
-[15:03:50] [KIBIC     ] [PID:4309  ] PID 4309 wyrzucony - noz
-[15:03:50] [KONTROLA  ] [PID:4276  ] Sektor 1 Stan 1: Wpuszczono PID 4310 druzyna B
-```
-
-### Test 3 - Sprzedaż biletów i przekazanie biletu koledze
-
-- **Cel:** sprawdzić sprzedaż 2 biletów i przekazanie jednego koledze.
-- **Oczekiwany rezultat:** w logu widoczna sprzedaż 2 biletów oraz wpis o przekazaniu biletu.
-- **Wynik:** **OK** - log potwierdza sprzedaż 2 biletów i przekazanie biletu koledze.
-
-Dowód w logu:
-```
-[15:03:50] [SPRZEDAZ  ] [PID:4265  ] Kasa 0: 2 bilet(y) sektor 4 dla PID 4264 
-[15:03:50] [KIBIC     ] [PID:4264  ] PID 4264 kupil 2 bilet(y) do sektora 4 (zwykly)
-[15:03:50] [KIBIC     ] [PID:4264  ] PID 4264 przekazal bilet koledze 4284
+Sektory (bilety/pojemnosc | osoby w srodku):
+  [0] bilety: 200/200 | osoby: 200
+  [1] bilety: 200/200 | osoby: 200
+  [2] bilety: 200/200 | osoby: 200
+  [3] bilety: 200/200 | osoby: 200
+  [4] bilety: 200/200 | osoby: 200
+  [5] bilety: 200/200 | osoby: 200
+  [6] bilety: 200/200 | osoby: 200
+  [7] bilety: 200/200 | osoby: 200
+VIP: 0/4(osob:0)
 ```
 
-### Test 4 - Rodzina (rodzic + dziecko) i wejście z opiekunem
+Weryfikacja komendą (z `test1/symulacja.log`):
+```bash
+$ grep -c "Sprzedano bilet" test1/symulacja.log
+1600
 
-- **Cel:** sprawdzić tworzenie rodziny oraz wejście dziecka z opiekunem.
-- **Oczekiwany rezultat:** log zawiera wpisy o utworzeniu dziecka, kompletnej rodzinie i pozytywnej kontroli.
-- **Wynik:** **OK** - log potwierdza poprawne przejście rodzica i dziecka.
+$ grep -c "Wpuszczono PID" test1/symulacja.log
+1600
+```
 
-Dowód w logu:
+Statystyki z logu:
+- Sprzedanych biletów: **1600** (pojemność K)
+- Wpuszczonych kibiców: **1600** (pojemność K)
+- Wykrytych noży: **0**
+
+---
+
+### Test 2 - Weryfikacja kontroli bezpieczeństwa (wszyscy mają noże)
+
+- **Cel:** Sprawdzenie czy kontrola bezpieczeństwa prawidłowo odrzuca kibiców z niebezpiecznymi przedmiotami.
+- **Założenia:**
+  - Generujemy 10 000 kibiców (bez opóźnienia, z barierą)
+  - **Wszyscy mają nóż** (`SZANSA_NA_PRZEDMIOT = 100`)
+  - Nikt nie jest VIP (wyłączony - VIP omija kontrolę)
+  - Nikt nie ma dziecka (`SZANSA_RODZINY = 0`)
+- **Oczekiwany rezultat:** **0 kibiców** wchodzi do hali - wszyscy zostają odrzuceni na kontroli bezpieczeństwa.
+- **Wynik:** **OK** - monitor potwierdza 0 osób w hali mimo 1600 sprzedanych biletów.
+
+Dowód z monitora (`test2/dowod_monitor.txt`):
 ```
-[15:03:50] [KIBIC     ] [PID:4316  ] PID 4316 rodzic utworzyl dziecko 4317
-[15:03:50] [KIBIC     ] [PID:4317  ] PID 4317 dziecko rodzica 4316, wiek 11, sektor 7
-[15:03:50] [KIBIC     ] [PID:4317  ] PID 4317 rodzina kompletna przy bramce
-[15:03:50] [KONTROLA  ] [PID:4283  ] Sektor 7 Stan 1: Dziecko PID 4317 z opiekunem
+Status: ONLINE
+
+Osob w hali: 0
+Biletow sprzedanych: 1600
+Bilety: DOSTEPNE
+Ewakuacja: NIE
+Faza: MECZ TRWA
+
+Sektory (bilety/pojemnosc | osoby w srodku):
+  [0] bilety: 200/200 | osoby: 0
+  [1] bilety: 200/200 | osoby: 0
+  [2] bilety: 200/200 | osoby: 0
+  [3] bilety: 200/200 | osoby: 0
+  [4] bilety: 200/200 | osoby: 0
+  [5] bilety: 200/200 | osoby: 0
+  [6] bilety: 200/200 | osoby: 0
+  [7] bilety: 200/200 | osoby: 0
+VIP: 0/4(osob:0)
 ```
+
+Weryfikacja komendą (z `test2/symulacja.log`):
+```bash
+$ grep -c "Sprzedano bilet" test2/symulacja.log
+1600
+
+$ grep -c "Wykryto noz" test2/symulacja.log
+1600
+
+$ grep -c "Wpuszczono PID" test2/symulacja.log
+0
+```
+
+Statystyki z logu:
+- Sprzedanych biletów: **1600**
+- Zatrzymanych za nóż: **1600** (wszyscy którzy doszli do kontroli)
+- Wpuszczonych kibiców: **0**
+
+---
+
+### Test 3 - Weryfikacja braku głodzenia drużyny mniejszościowej
+
+- **Cel:** Sprawdzenie czy kibic drużyny mniejszościowej (B) nie jest głodzony przez kibiców drużyny większościowej (A).
+- **Założenia:**
+  - Generujemy 3001 kibiców (bez opóźnienia, z barierą):
+    - 3000 kibiców drużyny A
+    - 1 kibic drużyny B (generowany jako 1500. w kolejności - w środku)
+  - Przypisanie drużyny przez zmienną środowiskową `TEST3_DRUZYNA`
+  - Pojemność K=1600 (domyślna)
+  - Nikt nie ma noża, nikt nie jest VIP
+- **Oczekiwany rezultat:** Kibic drużyny B **wchodzi do hali** - nie jest głodzony mimo przewagi drużyny A.
+- **Wynik:** **OK** - log potwierdza wpuszczenie kibica drużyny B.
+
+Dowód w logu (`test3/symulacja.log`):
+```
+[14:40:48] [KONTROLA  ] [PID:70802 ] Sektor 2 Stan 1: Wpuszczono PID 72312 druzyna B
+```
+
+Weryfikacja komendą:
+```bash
+$ grep -c "Wpuszczono PID" test3/symulacja.log
+3001
+
+# Pierwszy wpuszczony kibic (linia 1824):
+$ grep -n "Wpuszczono PID" test3/symulacja.log | head -1
+1824:[14:40:45] [KONTROLA  ] [PID:70836 ] Sektor 7 Stan 1: Wpuszczono PID 71162 druzyna A
+
+# Kibic druzyny B (linia 13767):
+$ grep -n "druzyna B" test3/symulacja.log
+13767:[14:40:48] [KONTROLA  ] [PID:70802 ] Sektor 2 Stan 1: Wpuszczono PID 72312 druzyna B
+
+# Ostatni wpuszczony kibic (linia 18055):
+$ grep -n "Wpuszczono PID" test3/symulacja.log | tail -1
+18055:[14:40:49] [KONTROLA  ] [PID:70801 ] Sektor 1 Stan 0: Wpuszczono PID 72392 druzyna A
+```
+
+Statystyki z logu:
+- Wpuszczonych kibiców: **3001** (w tym 1 drużyna B)
+- Wpuszczanie trwało od linii **1824** do **18055** (zakres 16231 linii)
+- Kibic drużyny B wszedł w linii **13767** (~74% procesu wpuszczania)
+- **Kibic B nie był głodzony** - wszedł w trakcie trwania wpuszczania, nie na końcu
+
+---
+
+### Test 4 - Weryfikacja kibiców czekających przy bramkach
+
+- **Cel:** Sprawdzenie czy kibice prawidłowo gromadzą się przy bramkach gdy pracownicy ich nie obsługują.
+- **Założenia:**
+  - Generujemy 5000 kibiców (bez opóźnienia, z barierą)
+  - Pracownicy mają `sleep(100)` **przed** semop - nie obsługują bramek przez 100 sekund (kibice po zakupie biletu gromadzą się przy kontroli, lecz przez nią nie przechodzą)
+  - Pojemność K=6000
+  - Nikt nie ma noża, nikt nie jest VIP
+- **Oczekiwany rezultat:** Po sprzedaży biletów kibice gromadzą się przy bramkach jako aktywne procesy.
+- **Wynik:** **OK** - 5000 procesów kibica czeka przy bramkach.
+
+Procedura testu:
+1. Uruchomiono `./main -k 6000 -t 90 -d 90`
+2. Po sprzedaży 5000 biletów wykonano `Ctrl+Z` (wstrzymanie)
+3. Sprawdzono stan procesów i zasobów IPC
+
+Dowód z konsoli (`test4/konsola_dowod.txt`):
+```
+^Z
+[1]+  Stopped                 ./main -k 6000 -t 90 -d 90
+vscode ➜ /workspace/test4 (main) $ ipcs
+
+------ Message Queues --------
+key        msqid      owner      perms      used-bytes   messages
+0x662b0302 27         vscode     600        0            0
+
+------ Shared Memory Segments --------
+key        shmid      owner      perms      bytes      nattch     status
+0x642b0302 27         vscode     600        3576       5019
+
+------ Semaphore Arrays --------
+key        semid      owner      perms      nsems
+0x652b0302 27         vscode     600        146
+
+vscode ➜ /workspace/test4 (main) $ pgrep -c kibic
+5000
+vscode ➜ /workspace/test4 (main) $ pgrep -c kasjer
+10
+vscode ➜ /workspace/test4 (main) $ pgrep -c pracownik
+8
+vscode ➜ /workspace/test4 (main) $ pgrep -c main
+1
+```
+
+Analiza wyników:
+- **5000 procesów kibica** aktywnych (czekających przy bramkach)
+- **10 procesów kasjer** (wszystkie kasy)
+- **8 procesów pracownik** (jeden na sektor)
+- **1 proces main** (główny)
+- Pamięć współdzielona ma **5019 podłączeń** (nattch) - potwierdzenie aktywnych procesów
+- Kolejka komunikatów pusta (0 messages) - wszyscy kibice już kupili bilety
 
 ---
 
