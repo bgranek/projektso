@@ -131,7 +131,7 @@ make clean && make
 5. Uruchamia wątek zarządzający fazami meczu (start, trwanie, koniec)
 6. Uruchamia procesy kasjerów (10) przez `fork()` + `execl()`
 7. Uruchamia procesy pracowników (8) przez `fork()` + `execl()`
-8. Generuje procesy kibiców w pętli (z limitowaniem aktywnych procesów)
+8. Generuje procesy kibiców w pętli
 9. Po zakończeniu meczu czeka na wyjście wszystkich kibiców
 10. Sprząta zasoby IPC i kończy symulację
 
@@ -474,6 +474,7 @@ Kategorie: MAIN, KIEROWNIK, KASJER, PRACOWNIK, KIBIC, KONTROLA, STATYSTYKI, SEKT
 |-------|---------|------|
 | `watek_czasu_meczu` | Zarządzanie fazami | Czeka na start meczu, zmienia fazę, czeka na koniec |
 | `watek_serwera_socket` | Serwer monitoringu | Obsługuje połączenia TCP od monitora |
+| `watek_generator_kibicow` | Generator kibiców | Tworzy procesy kibiców przez fork()+execl() |
 
 ### 13.2 Wątki w procesie pracownika
 
@@ -957,122 +958,125 @@ Analiza wyników:
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `creat()` | rejestr.h | 27 | [rejestr.h#L27](https://github.com/bgranek/projektso/blob/main/rejestr.h#L27) |
-| `open()` | rejestr.h | 37 | [rejestr.h#L37](https://github.com/bgranek/projektso/blob/main/rejestr.h#L37) |
-| `open()` | pracownik.c | 142 | [pracownik.c#L142](https://github.com/bgranek/projektso/blob/main/pracownik.c#L142) |
-| `open()` | kierownik.c | 46 | [kierownik.c#L46](https://github.com/bgranek/projektso/blob/main/kierownik.c#L46) |
-| `write()` | rejestr.h | 58 | [rejestr.h#L58](https://github.com/bgranek/projektso/blob/main/rejestr.h#L58) |
-| `write()` | pracownik.c | 157 | [pracownik.c#L157](https://github.com/bgranek/projektso/blob/main/pracownik.c#L157) |
-| `read()` | kierownik.c | 64 | [kierownik.c#L64](https://github.com/bgranek/projektso/blob/main/kierownik.c#L64) |
-| `close()` | rejestr.h | 91 | [rejestr.h#L91](https://github.com/bgranek/projektso/blob/main/rejestr.h#L91) |
-| `close()` | pracownik.c | 166 | [pracownik.c#L166](https://github.com/bgranek/projektso/blob/main/pracownik.c#L166) |
-| `unlink()` | main.c | 17 | [main.c#L17](https://github.com/bgranek/projektso/blob/main/main.c#L17) |
+| `creat()` | rejestr.h | 34 | [rejestr.h#L34](https://github.com/bgranek/projektso/blob/main/rejestr.h#L34) |
+| `open()` | rejestr.h | 44 | [rejestr.h#L44](https://github.com/bgranek/projektso/blob/main/rejestr.h#L44) |
+| `open()` | pracownik.c | 167 | [pracownik.c#L167](https://github.com/bgranek/projektso/blob/main/pracownik.c#L167) |
+| `open()` | kierownik.c | 57 | [kierownik.c#L57](https://github.com/bgranek/projektso/blob/main/kierownik.c#L57) |
+| `write()` | rejestr.h | 66 | [rejestr.h#L66](https://github.com/bgranek/projektso/blob/main/rejestr.h#L66) |
+| `write()` | pracownik.c | 182 | [pracownik.c#L182](https://github.com/bgranek/projektso/blob/main/pracownik.c#L182) |
+| `read()` | kierownik.c | 77 | [kierownik.c#L77](https://github.com/bgranek/projektso/blob/main/kierownik.c#L77) |
+| `close()` | rejestr.h | 101 | [rejestr.h#L101](https://github.com/bgranek/projektso/blob/main/rejestr.h#L101) |
+| `close()` | pracownik.c | 191 | [pracownik.c#L191](https://github.com/bgranek/projektso/blob/main/pracownik.c#L191) |
+| `unlink()` | main.c | 30 | [main.c#L30](https://github.com/bgranek/projektso/blob/main/main.c#L30) |
 
 ### 20.2 Tworzenie procesów (fork, exec, exit, wait)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `fork()` + `execl()` kasjer | main.c | 463-467 | [main.c#L463-L467](https://github.com/bgranek/projektso/blob/main/main.c#L463-L467) |
-| `fork()` + `execl()` pracownik | main.c | 480-484 | [main.c#L480-L484](https://github.com/bgranek/projektso/blob/main/main.c#L480-L484) |
-| `fork()` + `execl()` kibic | main.c | 340-342 | [main.c#L340-L342](https://github.com/bgranek/projektso/blob/main/main.c#L340-L342) |
-| `exit()` | pracownik.c | 68 | [pracownik.c#L68](https://github.com/bgranek/projektso/blob/main/pracownik.c#L68) |
-| `wait()` | main.c | 229 | [main.c#L229](https://github.com/bgranek/projektso/blob/main/main.c#L229) |
+| `fork()` + `execl()` kasjer | main.c | 561-566 | [main.c#L561-L566](https://github.com/bgranek/projektso/blob/main/main.c#L561-L566) |
+| `fork()` + `execl()` pracownik | main.c | 580-585 | [main.c#L580-L585](https://github.com/bgranek/projektso/blob/main/main.c#L580-L585) |
+| `fork()` + `execl()` kibic | main.c | 419-421 | [main.c#L419-L421](https://github.com/bgranek/projektso/blob/main/main.c#L419-L421) |
+| `exit()` | pracownik.c | 84 | [pracownik.c#L84](https://github.com/bgranek/projektso/blob/main/pracownik.c#L84) |
+| `wait()` | main.c | 279 | [main.c#L279](https://github.com/bgranek/projektso/blob/main/main.c#L279) |
 
 ### 20.3 Tworzenie i obsługa wątków (pthread_*)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `pthread_create()` socket | main.c | 559 | [main.c#L559](https://github.com/bgranek/projektso/blob/main/main.c#L559) |
-| `pthread_create()` czas | main.c | 566 | [main.c#L566](https://github.com/bgranek/projektso/blob/main/main.c#L566) |
-| `pthread_create()` generator | main.c | 571 | [main.c#L571](https://github.com/bgranek/projektso/blob/main/main.c#L571) |
-| `pthread_create()` stanowiska | pracownik.c | 365-376 | [pracownik.c#L365-L376](https://github.com/bgranek/projektso/blob/main/pracownik.c#L365-L376) |
-| `pthread_create()` sygnaly | pracownik.c | 135 | [pracownik.c#L135](https://github.com/bgranek/projektso/blob/main/pracownik.c#L135) |
-| `pthread_join()` | main.c | 609-613 | [main.c#L609-L613](https://github.com/bgranek/projektso/blob/main/main.c#L609-L613) |
-| `pthread_mutex_lock()` | pracownik.c | 21 | [pracownik.c#L21](https://github.com/bgranek/projektso/blob/main/pracownik.c#L21) |
-| `pthread_cond_broadcast()` | pracownik.c | 23 | [pracownik.c#L23](https://github.com/bgranek/projektso/blob/main/pracownik.c#L23) |
-| `pthread_cond_wait()` | pracownik.c | 326 | [pracownik.c#L326](https://github.com/bgranek/projektso/blob/main/pracownik.c#L326) |
+| `pthread_create()` socket | main.c | 663 | [main.c#L663](https://github.com/bgranek/projektso/blob/main/main.c#L663) |
+| `pthread_create()` czas | main.c | 671 | [main.c#L671](https://github.com/bgranek/projektso/blob/main/main.c#L671) |
+| `pthread_create()` generator | main.c | 677 | [main.c#L677](https://github.com/bgranek/projektso/blob/main/main.c#L677) |
+| `pthread_create()` stanowiska | pracownik.c | 417 | [pracownik.c#L417](https://github.com/bgranek/projektso/blob/main/pracownik.c#L417) |
+| `pthread_create()` sygnaly | pracownik.c | 159 | [pracownik.c#L159](https://github.com/bgranek/projektso/blob/main/pracownik.c#L159) |
+| `pthread_join()` | main.c | 717-722 | [main.c#L717-L722](https://github.com/bgranek/projektso/blob/main/main.c#L717-L722) |
+| `pthread_detach()` socket | main.c | 666 | [main.c#L666](https://github.com/bgranek/projektso/blob/main/main.c#L666) |
+| `pthread_detach()` fifo | kierownik.c | 323 | [kierownik.c#L323](https://github.com/bgranek/projektso/blob/main/kierownik.c#L323) |
+| `pthread_mutex_lock()` | pracownik.c | 30 | [pracownik.c#L30](https://github.com/bgranek/projektso/blob/main/pracownik.c#L30) |
+| `pthread_mutex_unlock()` | pracownik.c | 33 | [pracownik.c#L33](https://github.com/bgranek/projektso/blob/main/pracownik.c#L33) |
+| `pthread_cond_broadcast()` | pracownik.c | 32 | [pracownik.c#L32](https://github.com/bgranek/projektso/blob/main/pracownik.c#L32) |
+| `pthread_cond_wait()` | pracownik.c | 365 | [pracownik.c#L365](https://github.com/bgranek/projektso/blob/main/pracownik.c#L365) |
 
 ### 20.4 Obsługa sygnałów (kill, sigaction, sigwait)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `sigaction()` SIGTERM | kasjer.c | 312-316 | [kasjer.c#L312-L316](https://github.com/bgranek/projektso/blob/main/kasjer.c#L312-L316) |
-| `sigaction()` EWAKUACJA | kibic.c | 193-197 | [kibic.c#L193-L197](https://github.com/bgranek/projektso/blob/main/kibic.c#L193-L197) |
-| `sigaction()` SIGINT | kierownik.c | 286-290 | [kierownik.c#L286-L290](https://github.com/bgranek/projektso/blob/main/kierownik.c#L286-L290) |
-| `sigwaitinfo()` | pracownik.c | 86 | [pracownik.c#L86](https://github.com/bgranek/projektso/blob/main/pracownik.c#L86) |
-| `kill()` blokada | kierownik.c | 207 | [kierownik.c#L207](https://github.com/bgranek/projektso/blob/main/kierownik.c#L207) |
-| `kill()` odblokowanie | kierownik.c | 240 | [kierownik.c#L240](https://github.com/bgranek/projektso/blob/main/kierownik.c#L240) |
-| `kill()` ewakuacja | kierownik.c | 273 | [kierownik.c#L273](https://github.com/bgranek/projektso/blob/main/kierownik.c#L273) |
-| `kill()` SIGTERM | main.c | 205 | [main.c#L205](https://github.com/bgranek/projektso/blob/main/main.c#L205) |
+| `sigaction()` SIGTERM | kasjer.c | 337-341 | [kasjer.c#L337-L341](https://github.com/bgranek/projektso/blob/main/kasjer.c#L337-L341) |
+| `sigaction()` EWAKUACJA | kibic.c | 226-230 | [kibic.c#L226-L230](https://github.com/bgranek/projektso/blob/main/kibic.c#L226-L230) |
+| `sigaction()` SIGINT | kierownik.c | 309-313 | [kierownik.c#L309-L313](https://github.com/bgranek/projektso/blob/main/kierownik.c#L309-L313) |
+| `sigwaitinfo()` | pracownik.c | 104 | [pracownik.c#L104](https://github.com/bgranek/projektso/blob/main/pracownik.c#L104) |
+| `kill()` blokada | kierownik.c | 223 | [kierownik.c#L223](https://github.com/bgranek/projektso/blob/main/kierownik.c#L223) |
+| `kill()` odblokowanie | kierownik.c | 258 | [kierownik.c#L258](https://github.com/bgranek/projektso/blob/main/kierownik.c#L258) |
+| `kill()` ewakuacja | kierownik.c | 296 | [kierownik.c#L296](https://github.com/bgranek/projektso/blob/main/kierownik.c#L296) |
+| `kill()` SIGTERM | main.c | 251 | [main.c#L251](https://github.com/bgranek/projektso/blob/main/main.c#L251) |
 
 ### 20.5 Synchronizacja - semafory (ftok, semget, semctl, semop)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `ftok()` | main.c | 86-90 | [main.c#L86-L90](https://github.com/bgranek/projektso/blob/main/main.c#L86-L90) |
-| `semget()` tworzenie | main.c | 135 | [main.c#L135](https://github.com/bgranek/projektso/blob/main/main.c#L135) |
-| `semget()` dostęp | kasjer.c | 46 | [kasjer.c#L46](https://github.com/bgranek/projektso/blob/main/kasjer.c#L46) |
-| `semctl()` inicjalizacja | main.c | 140-160 | [main.c#L140-L160](https://github.com/bgranek/projektso/blob/main/main.c#L140-L160) |
-| `semctl()` usunięcie | main.c | 47-48 | [main.c#L47-L48](https://github.com/bgranek/projektso/blob/main/main.c#L47-L48) |
-| `semop()` lock | kasjer.c | 77 | [kasjer.c#L77](https://github.com/bgranek/projektso/blob/main/kasjer.c#L77) |
-| `semop()` unlock | kasjer.c | 85 | [kasjer.c#L85](https://github.com/bgranek/projektso/blob/main/kasjer.c#L85) |
-| `semop_retry_ctx()` helper | common.h | 272-279 | [common.h#L272-L279](https://github.com/bgranek/projektso/blob/main/common.h#L272-L279) |
+| `ftok()` | main.c | 116-121 | [main.c#L116-L121](https://github.com/bgranek/projektso/blob/main/main.c#L116-L121) |
+| `semget()` tworzenie | main.c | 184 | [main.c#L184](https://github.com/bgranek/projektso/blob/main/main.c#L184) |
+| `semget()` dostęp | kasjer.c | 51 | [kasjer.c#L51](https://github.com/bgranek/projektso/blob/main/kasjer.c#L51) |
+| `semctl()` inicjalizacja | main.c | 200-219 | [main.c#L200-L219](https://github.com/bgranek/projektso/blob/main/main.c#L200-L219) |
+| `semctl()` usunięcie | main.c | 66 | [main.c#L66](https://github.com/bgranek/projektso/blob/main/main.c#L66) |
+| `semop()` lock | kasjer.c | 85 | [kasjer.c#L85](https://github.com/bgranek/projektso/blob/main/kasjer.c#L85) |
+| `semop()` unlock | kasjer.c | 94 | [kasjer.c#L94](https://github.com/bgranek/projektso/blob/main/kasjer.c#L94) |
+| `semop_retry_ctx()` helper | common.h | 356-363 | [common.h#L356-L363](https://github.com/bgranek/projektso/blob/main/common.h#L356-L363) |
 
 ### 20.6 Łącza nazwane FIFO (mkfifo)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `mkfifo()` | main.c | 75 | [main.c#L75](https://github.com/bgranek/projektso/blob/main/main.c#L75) |
-| FIFO write (pracownik→kierownik) | pracownik.c | 142-167 | [pracownik.c#L142-L167](https://github.com/bgranek/projektso/blob/main/pracownik.c#L142-L167) |
-| FIFO read (kierownik) | kierownik.c | 56-118 | [kierownik.c#L56-L118](https://github.com/bgranek/projektso/blob/main/kierownik.c#L56-L118) |
+| `mkfifo()` | main.c | 98 | [main.c#L98](https://github.com/bgranek/projektso/blob/main/main.c#L98) |
+| FIFO write (pracownik→kierownik) | pracownik.c | 167-194 | [pracownik.c#L167-L194](https://github.com/bgranek/projektso/blob/main/pracownik.c#L167-L194) |
+| FIFO read (kierownik) | kierownik.c | 77-134 | [kierownik.c#L77-L134](https://github.com/bgranek/projektso/blob/main/kierownik.c#L77-L134) |
 
 ### 20.7 Segmenty pamięci dzielonej (shmget, shmat, shmdt, shmctl)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `shmget()` tworzenie | main.c | 93-101 | [main.c#L93-L101](https://github.com/bgranek/projektso/blob/main/main.c#L93-L101) |
-| `shmat()` | main.c | 105 | [main.c#L105](https://github.com/bgranek/projektso/blob/main/main.c#L105) |
-| `shmget()` dostęp | kasjer.c | 40 | [kasjer.c#L40](https://github.com/bgranek/projektso/blob/main/kasjer.c#L40) |
-| `shmat()` kasjer | kasjer.c | 49 | [kasjer.c#L49](https://github.com/bgranek/projektso/blob/main/kasjer.c#L49) |
-| `shmdt()` | kasjer.c | 26 | [kasjer.c#L26](https://github.com/bgranek/projektso/blob/main/kasjer.c#L26) |
-| `shmctl()` usunięcie | main.c | 39 | [main.c#L39](https://github.com/bgranek/projektso/blob/main/main.c#L39) |
-| Struktura StanHali | common.h | 148-182 | [common.h#L148-L182](https://github.com/bgranek/projektso/blob/main/common.h#L148-L182) |
+| `shmget()` tworzenie | main.c | 124-132 | [main.c#L124-L132](https://github.com/bgranek/projektso/blob/main/main.c#L124-L132) |
+| `shmat()` | main.c | 137 | [main.c#L137](https://github.com/bgranek/projektso/blob/main/main.c#L137) |
+| `shmget()` dostęp | kasjer.c | 45 | [kasjer.c#L45](https://github.com/bgranek/projektso/blob/main/kasjer.c#L45) |
+| `shmat()` kasjer | kasjer.c | 54 | [kasjer.c#L54](https://github.com/bgranek/projektso/blob/main/kasjer.c#L54) |
+| `shmdt()` | kasjer.c | 30 | [kasjer.c#L30](https://github.com/bgranek/projektso/blob/main/kasjer.c#L30) |
+| `shmctl()` usunięcie | main.c | 58 | [main.c#L58](https://github.com/bgranek/projektso/blob/main/main.c#L58) |
+| Struktura StanHali | common.h | 209-251 | [common.h#L209-L251](https://github.com/bgranek/projektso/blob/main/common.h#L209-L251) |
 
 ### 20.8 Kolejki komunikatów (msgget, msgsnd, msgrcv, msgctl)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `msgget()` tworzenie | main.c | 181-189 | [main.c#L181-L189](https://github.com/bgranek/projektso/blob/main/main.c#L181-L189) |
-| `msgget()` dostęp | kasjer.c | 43 | [kasjer.c#L43](https://github.com/bgranek/projektso/blob/main/kasjer.c#L43) |
-| `msgsnd()` kibic | kibic.c | 372 | [kibic.c#L372](https://github.com/bgranek/projektso/blob/main/kibic.c#L372) |
-| `msgrcv()` kibic | kibic.c | 379 | [kibic.c#L379](https://github.com/bgranek/projektso/blob/main/kibic.c#L379) |
-| `msgrcv()` kasjer | kasjer.c | 174 | [kasjer.c#L174](https://github.com/bgranek/projektso/blob/main/kasjer.c#L174) |
-| `msgsnd()` kasjer | kasjer.c | 266 | [kasjer.c#L266](https://github.com/bgranek/projektso/blob/main/kasjer.c#L266) |
-| `msgctl()` usunięcie | main.c | 53 | [main.c#L53](https://github.com/bgranek/projektso/blob/main/main.c#L53) |
-| Struktura KomunikatBilet | common.h | 184-192 | [common.h#L184-L192](https://github.com/bgranek/projektso/blob/main/common.h#L184-L192) |
-| Struktura OdpowiedzBilet | common.h | 194-199 | [common.h#L194-L199](https://github.com/bgranek/projektso/blob/main/common.h#L194-L199) |
+| `msgget()` tworzenie | main.c | 222-230 | [main.c#L222-L230](https://github.com/bgranek/projektso/blob/main/main.c#L222-L230) |
+| `msgget()` dostęp | kasjer.c | 48 | [kasjer.c#L48](https://github.com/bgranek/projektso/blob/main/kasjer.c#L48) |
+| `msgsnd()` kibic | kibic.c | 404 | [kibic.c#L404](https://github.com/bgranek/projektso/blob/main/kibic.c#L404) |
+| `msgrcv()` kibic | kibic.c | 412 | [kibic.c#L412](https://github.com/bgranek/projektso/blob/main/kibic.c#L412) |
+| `msgrcv()` kasjer | kasjer.c | 190 | [kasjer.c#L190](https://github.com/bgranek/projektso/blob/main/kasjer.c#L190) |
+| `msgsnd()` kasjer | kasjer.c | 290 | [kasjer.c#L290](https://github.com/bgranek/projektso/blob/main/kasjer.c#L290) |
+| `msgctl()` usunięcie | main.c | 74 | [main.c#L74](https://github.com/bgranek/projektso/blob/main/main.c#L74) |
+| Struktura KomunikatBilet | common.h | 257-265 | [common.h#L257-L265](https://github.com/bgranek/projektso/blob/main/common.h#L257-L265) |
+| Struktura OdpowiedzBilet | common.h | 271-276 | [common.h#L271-L276](https://github.com/bgranek/projektso/blob/main/common.h#L271-L276) |
 
 ### 20.9 Gniazda sieciowe (socket, bind, listen, accept, connect)
 
 | Funkcja | Plik | Linia | Link |
 |---------|------|-------|------|
-| `socket()` serwer | main.c | 367 | [main.c#L367](https://github.com/bgranek/projektso/blob/main/main.c#L367) |
-| `bind()` | main.c | 388 | [main.c#L388](https://github.com/bgranek/projektso/blob/main/main.c#L388) |
-| `listen()` | main.c | 396 | [main.c#L396](https://github.com/bgranek/projektso/blob/main/main.c#L396) |
-| `accept()` | main.c | 408 | [main.c#L408](https://github.com/bgranek/projektso/blob/main/main.c#L408) |
-| `socket()` klient | monitor.c | 35 | [monitor.c#L35](https://github.com/bgranek/projektso/blob/main/monitor.c#L35) |
-| `connect()` | monitor.c | 55 | [monitor.c#L55](https://github.com/bgranek/projektso/blob/main/monitor.c#L55) |
-| Cały serwer socket | main.c | 364-459 | [main.c#L364-L459](https://github.com/bgranek/projektso/blob/main/main.c#L364-L459) |
+| `socket()` serwer | main.c | 457 | [main.c#L457](https://github.com/bgranek/projektso/blob/main/main.c#L457) |
+| `bind()` | main.c | 481 | [main.c#L481](https://github.com/bgranek/projektso/blob/main/main.c#L481) |
+| `listen()` | main.c | 490 | [main.c#L490](https://github.com/bgranek/projektso/blob/main/main.c#L490) |
+| `accept()` | main.c | 503 | [main.c#L503](https://github.com/bgranek/projektso/blob/main/main.c#L503) |
+| `socket()` klient | monitor.c | 45 | [monitor.c#L45](https://github.com/bgranek/projektso/blob/main/monitor.c#L45) |
+| `connect()` | monitor.c | 66 | [monitor.c#L66](https://github.com/bgranek/projektso/blob/main/monitor.c#L66) |
+| Cały serwer socket | main.c | 453-556 | [main.c#L453-L556](https://github.com/bgranek/projektso/blob/main/main.c#L453-L556) |
 
 ### 20.10 Obsługa błędów (perror, errno, walidacja)
 
 | Element | Plik | Linia | Link |
 |---------|------|-------|------|
-| Makro SPRAWDZ | common.h | 98-104 | [common.h#L98-L104](https://github.com/bgranek/projektso/blob/main/common.h#L98-L104) |
-| Makro WALIDUJ_ZAKRES | common.h | 106-113 | [common.h#L106-L113](https://github.com/bgranek/projektso/blob/main/common.h#L106-L113) |
-| parsuj_int() | common.h | 208-230 | [common.h#L208-L230](https://github.com/bgranek/projektso/blob/main/common.h#L208-L230) |
-| bezpieczny_scanf_int() | common.h | 232-270 | [common.h#L232-L270](https://github.com/bgranek/projektso/blob/main/common.h#L232-L270) |
-| semop_retry_ctx() (EINTR) | common.h | 272-279 | [common.h#L272-L279](https://github.com/bgranek/projektso/blob/main/common.h#L272-L279) |
+| Makro SPRAWDZ | common.h | 141-147 | [common.h#L141-L147](https://github.com/bgranek/projektso/blob/main/common.h#L141-L147) |
+| Makro WALIDUJ_ZAKRES | common.h | 150-157 | [common.h#L150-L157](https://github.com/bgranek/projektso/blob/main/common.h#L150-L157) |
+| parsuj_int() | common.h | 290-312 | [common.h#L290-L312](https://github.com/bgranek/projektso/blob/main/common.h#L290-L312) |
+| bezpieczny_scanf_int() | common.h | 315-353 | [common.h#L315-L353](https://github.com/bgranek/projektso/blob/main/common.h#L315-L353) |
+| semop_retry_ctx() (EINTR) | common.h | 356-363 | [common.h#L356-L363](https://github.com/bgranek/projektso/blob/main/common.h#L356-L363) |
 
 ### 20.11 Własne moduły
 
